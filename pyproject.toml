@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mist-autoresearch"
+version = "0.1.0"
+requires-python = ">=3.10"
+description = "Autoresearch tools for 3D medical imaging segmentation with MIST."
+readme = "README.md"
+license = {file = "LICENSE"}
+authors = [
+    {name = "Adrian Celaya", email = "acelaya0@gmail.com"},
+]
+keywords = [
+    "medical image segmentation",
+    "autoresearch",
+    "postprocessing",
+    "MIST",
+    "LLM",
+]
+dependencies = [
+    "anthropic>=0.25.0",
+    "mist-medical",
+    "pandas",
+    "rich",
+]
+
+[project.urls]
+repository = "https://github.com/aecelaya/mist-autoresearch"
+
+[project.scripts]
+mist_autoresearch = "mist_autoresearch.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["mist_autoresearch*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
