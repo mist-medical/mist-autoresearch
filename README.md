@@ -1,4 +1,4 @@
-# mist-autoresearch
+# MIST Autoresearch
 
 LLM-driven autoresearch tools for [MIST](https://github.com/mist-medical/MIST) medical image segmentation experiments.
 
