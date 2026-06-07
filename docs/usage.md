@@ -51,7 +51,7 @@ mist_autoresearch postprocessing \
 
 | Flag | Default | Description |
 |---|---|---|
-| `--model` | `claude-opus-4-8` | Anthropic model ID used for strategy proposals. |
+| `--model` | *(Claude Code default)* | Model name forwarded to `claude --model`. Omit to use Claude Code's active model. |
 | `--num-workers` | `1` | Parallel workers for postprocessing and evaluation. |
 
 ## Output structure

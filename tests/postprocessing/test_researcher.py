@@ -1,5 +1,6 @@
 """Tests for mist_autoresearch.postprocessing.researcher."""
 import json
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -9,8 +10,8 @@ import pytest
 
 from mist_autoresearch.postprocessing.researcher import (
     PostprocessingResearcher,
-    STRATEGY_TOOL,
     _load_transform_metadata,
+    _parse_strategy_response,
 )
 from mist_autoresearch.stopping import StoppingCriteria
 
@@ -29,30 +30,80 @@ def _make_config(tmp_path: Path) -> Path:
     return p
 
 
-def _make_researcher(tmp_path: Path, client=None) -> PostprocessingResearcher:
+def _make_researcher(tmp_path: Path, model=None) -> PostprocessingResearcher:
     config = _make_config(tmp_path)
-    mock_client = client or MagicMock()
     return PostprocessingResearcher(
         config=config,
         predictions_dir=tmp_path / "preds",
         test_csv=tmp_path / "test.csv",
         output_dir=tmp_path / "out",
         stopping=StoppingCriteria(max_iterations=1),
-        client=mock_client,
+        model=model,
     )
 
 
-def _make_tool_response(steps, narrative):
-    block = SimpleNamespace(
-        type="tool_use",
-        name="submit_strategy",
-        input={"steps": steps, "narrative": narrative},
-    )
-    return SimpleNamespace(content=[block], stop_reason="tool_use")
+def _fake_run(stdout: str):
+    """Return a mock subprocess.CompletedProcess with the given stdout."""
+    return SimpleNamespace(stdout=stdout, returncode=0)
 
 
 # ---------------------------------------------------------------------------
-# Tests
+# _parse_strategy_response
+# ---------------------------------------------------------------------------
+
+class TestParseStrategyResponse:
+
+    def test_parses_fenced_json_block(self):
+        text = (
+            "Here is my proposal:\n"
+            "```json\n"
+            '{"steps": [{"transform": "remove_small_objects", '
+            '"apply_to_labels": [-1], "per_label": false}], '
+            '"narrative": "reasoning"}\n'
+            "```"
+        )
+        steps, narrative = _parse_strategy_response(text)
+        assert steps[0]["transform"] == "remove_small_objects"
+        assert narrative == "reasoning"
+
+    def test_parses_bare_json_object(self):
+        text = '{"steps": [], "narrative": "no-op"}'
+        steps, narrative = _parse_strategy_response(text)
+        assert steps == []
+        assert narrative == "no-op"
+
+    def test_raises_when_no_json_found(self):
+        with pytest.raises(RuntimeError, match="Could not find"):
+            _parse_strategy_response("Sorry, I cannot propose a strategy.")
+
+    def test_raises_on_invalid_json(self):
+        with pytest.raises(RuntimeError, match="Failed to parse"):
+            _parse_strategy_response("```json\n{invalid json}\n```")
+
+    def test_raises_when_steps_key_missing(self):
+        text = '{"narrative": "oops"}'
+        with pytest.raises(RuntimeError, match="missing required 'steps'"):
+            _parse_strategy_response(text)
+
+    def test_narrative_defaults_to_empty_string(self):
+        text = '{"steps": []}'
+        _, narrative = _parse_strategy_response(text)
+        assert narrative == ""
+
+    def test_prefers_fenced_block_over_bare_json(self):
+        text = (
+            'Some text {"steps": [], "narrative": "bare"} here.\n'
+            "```json\n"
+            '{"steps": [{"transform": "fill_holes_with_label", '
+            '"apply_to_labels": [1], "per_label": true}], "narrative": "fenced"}\n'
+            "```"
+        )
+        steps, narrative = _parse_strategy_response(text)
+        assert narrative == "fenced"
+
+
+# ---------------------------------------------------------------------------
+# PostprocessingResearcher init
 # ---------------------------------------------------------------------------
 
 class TestPostprocessingResearcherInit:
@@ -65,81 +116,107 @@ class TestPostprocessingResearcherInit:
         r = _make_researcher(tmp_path)
         assert r.evaluator is not None
 
+    def test_model_none_by_default(self, tmp_path):
+        r = _make_researcher(tmp_path)
+        assert r._model is None
+
+
+# ---------------------------------------------------------------------------
+# propose()
+# ---------------------------------------------------------------------------
 
 class TestPropose:
 
+    def _valid_response(self, steps, narrative):
+        payload = json.dumps({"steps": steps, "narrative": narrative})
+        return f"```json\n{payload}\n```"
+
     def test_returns_steps_and_narrative(self, tmp_path):
+        r = _make_researcher(tmp_path)
         steps = [{"transform": "remove_small_objects", "apply_to_labels": [-1],
                   "per_label": False}]
-        mock_client = MagicMock()
-        mock_client.messages.create.return_value = _make_tool_response(steps, "reasoning")
-        r = _make_researcher(tmp_path, client=mock_client)
+        response_text = self._valid_response(steps, "reasoning")
 
-        with patch("mist_autoresearch.postprocessing.researcher._load_transform_metadata",
+        with patch("subprocess.run", return_value=_fake_run(response_text)), \
+             patch("mist_autoresearch.postprocessing.researcher._load_transform_metadata",
                    return_value=[]):
             result_steps, narrative = r.propose({
-                "config": r._config_data,
-                "transforms": [],
-                "baseline_results": [],
-                "rank_df": None,
-                "significance": None,
-                "history": [],
-            })
-
-        assert result_steps == steps
-        assert narrative == "reasoning"
-
-    def test_raises_if_no_tool_use_block(self, tmp_path):
-        mock_client = MagicMock()
-        mock_client.messages.create.return_value = SimpleNamespace(
-            content=[SimpleNamespace(type="text", text="sorry")],
-            stop_reason="end_turn",
-        )
-        r = _make_researcher(tmp_path, client=mock_client)
-
-        with pytest.raises(RuntimeError, match="tool use"):
-            r.propose({
                 "config": r._config_data, "transforms": [],
                 "baseline_results": [], "rank_df": None,
                 "significance": None, "history": [],
             })
 
-    def test_uses_correct_tool_in_api_call(self, tmp_path):
-        steps = []
-        mock_client = MagicMock()
-        mock_client.messages.create.return_value = _make_tool_response(steps, "n")
-        r = _make_researcher(tmp_path, client=mock_client)
+        assert result_steps == steps
+        assert narrative == "reasoning"
 
-        with patch("mist_autoresearch.postprocessing.researcher._load_transform_metadata",
+    def test_raises_on_unparseable_response(self, tmp_path):
+        r = _make_researcher(tmp_path)
+        with patch("subprocess.run", return_value=_fake_run("no json here")), \
+             patch("mist_autoresearch.postprocessing.researcher._load_transform_metadata",
+                   return_value=[]):
+            with pytest.raises(RuntimeError, match="Could not find"):
+                r.propose({"config": r._config_data, "transforms": [],
+                            "baseline_results": [], "rank_df": None,
+                            "significance": None, "history": []})
+
+    def test_cmd_without_model(self, tmp_path):
+        r = _make_researcher(tmp_path, model=None)
+        response_text = self._valid_response([], "n")
+
+        with patch("subprocess.run", return_value=_fake_run(response_text)) as mock_run, \
+             patch("mist_autoresearch.postprocessing.researcher._load_transform_metadata",
                    return_value=[]):
             r.propose({"config": r._config_data, "transforms": [],
                        "baseline_results": [], "rank_df": None,
                        "significance": None, "history": []})
 
-        call_kwargs = mock_client.messages.create.call_args[1]
-        assert call_kwargs["tools"] == [STRATEGY_TOOL]
+        cmd = mock_run.call_args[0][0]
+        assert "--model" not in cmd
 
-    def test_passes_model_to_api(self, tmp_path):
-        mock_client = MagicMock()
-        mock_client.messages.create.return_value = _make_tool_response([], "n")
-        config = _make_config(tmp_path)
-        r = PostprocessingResearcher(
-            config=config,
-            predictions_dir=tmp_path / "preds",
-            test_csv=tmp_path / "test.csv",
-            output_dir=tmp_path / "out",
-            stopping=StoppingCriteria(),
-            model="claude-haiku-4-5-20251001",
-            client=mock_client,
-        )
-        with patch("mist_autoresearch.postprocessing.researcher._load_transform_metadata",
+    def test_cmd_with_model(self, tmp_path):
+        r = _make_researcher(tmp_path, model="claude-opus-4-8")
+        response_text = self._valid_response([], "n")
+
+        with patch("subprocess.run", return_value=_fake_run(response_text)) as mock_run, \
+             patch("mist_autoresearch.postprocessing.researcher._load_transform_metadata",
                    return_value=[]):
             r.propose({"config": r._config_data, "transforms": [],
                        "baseline_results": [], "rank_df": None,
                        "significance": None, "history": []})
-        call_kwargs = mock_client.messages.create.call_args[1]
-        assert call_kwargs["model"] == "claude-haiku-4-5-20251001"
 
+        cmd = mock_run.call_args[0][0]
+        assert "--model" in cmd
+        assert "claude-opus-4-8" in cmd
+
+    def test_subprocess_called_with_check_true(self, tmp_path):
+        r = _make_researcher(tmp_path)
+        response_text = self._valid_response([], "n")
+
+        with patch("subprocess.run", return_value=_fake_run(response_text)) as mock_run, \
+             patch("mist_autoresearch.postprocessing.researcher._load_transform_metadata",
+                   return_value=[]):
+            r.propose({"config": r._config_data, "transforms": [],
+                       "baseline_results": [], "rank_df": None,
+                       "significance": None, "history": []})
+
+        _, kwargs = mock_run.call_args
+        assert kwargs.get("check") is True
+
+    def test_propagates_subprocess_error(self, tmp_path):
+        r = _make_researcher(tmp_path)
+        with patch("subprocess.run",
+                   side_effect=subprocess.CalledProcessError(1, "claude")), \
+             patch("mist_autoresearch.postprocessing.researcher._load_transform_metadata",
+                   return_value=[]):
+            with pytest.raises(subprocess.CalledProcessError):
+                r.propose({"config": r._config_data, "transforms": [],
+                            "baseline_results": [], "rank_df": None,
+                            "significance": None, "history": []})
+
+
+# ---------------------------------------------------------------------------
+# build_context
+# ---------------------------------------------------------------------------
 
 class TestBuildContext:
 
@@ -178,32 +255,44 @@ class TestBuildContext:
         assert ctx["significance"] is not None
 
 
+# ---------------------------------------------------------------------------
+# _build_prompt
+# ---------------------------------------------------------------------------
+
 class TestBuildPrompt:
 
     def test_prompt_contains_dataset_info(self, tmp_path):
         r = _make_researcher(tmp_path)
         ctx = {
-            "config": r._config_data,
-            "transforms": [],
-            "baseline_results": [],
-            "rank_df": None,
-            "significance": None,
-            "history": [],
+            "config": r._config_data, "transforms": [],
+            "baseline_results": [], "rank_df": None,
+            "significance": None, "history": [],
         }
         prompt = r._build_prompt(ctx)
         assert "labels" in prompt
-        assert "final_classes" in prompt or "WT" in prompt
+        assert "WT" in prompt
+
+    def test_prompt_contains_json_instruction(self, tmp_path):
+        r = _make_researcher(tmp_path)
+        ctx = {
+            "config": r._config_data, "transforms": [],
+            "baseline_results": [], "rank_df": None,
+            "significance": None, "history": [],
+        }
+        prompt = r._build_prompt(ctx)
+        assert "```json" in prompt
+        assert "steps" in prompt
+        assert "narrative" in prompt
 
     def test_prompt_contains_history_entries(self, tmp_path):
         r = _make_researcher(tmp_path)
         ctx = {
-            "config": r._config_data,
-            "transforms": [],
+            "config": r._config_data, "transforms": [],
             "baseline_results": [],
             "rank_df": [{"strategy": "baseline", "average_rank": 1.0}],
             "significance": None,
             "history": [{"iteration": 1, "mean_rank": 1.5,
-                         "p_value_vs_baseline": 0.03, "strategy": []}],
+                          "p_value_vs_baseline": 0.03, "strategy": []}],
         }
         prompt = r._build_prompt(ctx)
         assert "Iteration 1" in prompt
@@ -211,12 +300,10 @@ class TestBuildPrompt:
     def test_prompt_includes_ranking_when_provided(self, tmp_path):
         r = _make_researcher(tmp_path)
         ctx = {
-            "config": r._config_data,
-            "transforms": [],
+            "config": r._config_data, "transforms": [],
             "baseline_results": [],
             "rank_df": [{"strategy": "baseline", "average_rank": 1.0}],
-            "significance": None,
-            "history": [],
+            "significance": None, "history": [],
         }
         prompt = r._build_prompt(ctx)
         assert "Rankings" in prompt
@@ -224,16 +311,18 @@ class TestBuildPrompt:
     def test_prompt_includes_significance_when_provided(self, tmp_path):
         r = _make_researcher(tmp_path)
         ctx = {
-            "config": r._config_data,
-            "transforms": [],
-            "baseline_results": [],
-            "rank_df": None,
+            "config": r._config_data, "transforms": [],
+            "baseline_results": [], "rank_df": None,
             "significance": {"baseline": {"iteration_001": 0.03}},
             "history": [],
         }
         prompt = r._build_prompt(ctx)
         assert "Significance" in prompt
 
+
+# ---------------------------------------------------------------------------
+# evaluate delegate
+# ---------------------------------------------------------------------------
 
 class TestEvaluateDelegate:
 
@@ -245,6 +334,10 @@ class TestEvaluateDelegate:
         mock_run.assert_called_once_with([], tmp_path / "iter")
         pd.testing.assert_frame_equal(result, expected)
 
+
+# ---------------------------------------------------------------------------
+# _load_transform_metadata
+# ---------------------------------------------------------------------------
 
 class TestLoadTransformMetadata:
 

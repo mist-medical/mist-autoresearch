@@ -5,7 +5,7 @@ Getting Started
 
 - Python ≥ 3.10
 - A working MIST installation (`pip install mist-medical`)
-- An Anthropic API key (`ANTHROPIC_API_KEY` environment variable)
+- Claude Code CLI installed and authenticated (`claude` available on your PATH)
 
 ## Install
 
@@ -28,8 +28,6 @@ Before running `mist_autoresearch`, you need a completed MIST experiment:
 ## Quick Start
 
 ```console
-export ANTHROPIC_API_KEY=sk-...
-
 mist_autoresearch postprocessing \
   --config results/config.json \
   --predictions predictions/test \

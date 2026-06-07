@@ -18,7 +18,7 @@ LLM-driven autoresearch tools for [MIST](https://github.com/mist-medical/MIST) m
 pip install -e .
 ```
 
-Requires a working MIST installation and an `ANTHROPIC_API_KEY` environment variable.
+Requires a working MIST installation and the Claude Code CLI (`claude`) installed and authenticated.
 
 ## Quick start
 

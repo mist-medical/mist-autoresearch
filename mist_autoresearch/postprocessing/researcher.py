@@ -1,76 +1,16 @@
 """PostprocessingResearcher: LLM-driven postprocessing strategy search."""
 import json
+import re
+import subprocess
 from pathlib import Path
 from typing import Any
 
-import anthropic
 import pandas as pd
 
 from mist_autoresearch.base import AbstractResearcher
 from mist_autoresearch.stopping import StoppingCriteria
 
 from .evaluator import PostprocessingEvaluator
-
-
-# ---------------------------------------------------------------------------
-# Tool schema
-# ---------------------------------------------------------------------------
-
-STRATEGY_TOOL: dict[str, Any] = {
-    "name": "submit_strategy",
-    "description": (
-        "Submit a postprocessing strategy to evaluate. The strategy is an "
-        "ordered list of steps applied sequentially to each prediction mask."
-    ),
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "steps": {
-                "type": "array",
-                "description": "Ordered list of postprocessing steps.",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "transform": {
-                            "type": "string",
-                            "description": "Name of the registered transform.",
-                        },
-                        "apply_to_labels": {
-                            "type": "array",
-                            "items": {"type": "integer"},
-                            "description": (
-                                "Label IDs to apply this step to. "
-                                "Use [-1] for all foreground labels."
-                            ),
-                        },
-                        "per_label": {
-                            "type": "boolean",
-                            "description": (
-                                "If True, apply the transform to each label "
-                                "independently. If False, apply to the grouped "
-                                "binary mask of all specified labels."
-                            ),
-                        },
-                        "kwargs": {
-                            "type": "object",
-                            "description": "Transform-specific keyword arguments.",
-                        },
-                    },
-                    "required": ["transform", "apply_to_labels", "per_label"],
-                },
-            },
-            "narrative": {
-                "type": "string",
-                "description": (
-                    "Explain your reasoning: what you observed in prior results, "
-                    "what this strategy is intended to fix, and what you expect "
-                    "to happen."
-                ),
-            },
-        },
-        "required": ["steps", "narrative"],
-    },
-}
 
 
 # ---------------------------------------------------------------------------
@@ -82,6 +22,36 @@ def _load_transform_metadata() -> list[dict[str, Any]]:
     return describe_transforms()
 
 
+def _parse_strategy_response(text: str) -> tuple[list, str]:
+    """Extract (steps, narrative) from a claude -p response.
+
+    Looks for a JSON code block first, then falls back to a bare JSON object.
+
+    Raises:
+        RuntimeError: If no valid JSON object containing ``steps`` is found.
+    """
+    # Prefer a fenced JSON block.
+    match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    if not match:
+        match = re.search(r"(\{.*\})", text, re.DOTALL)
+    if not match:
+        raise RuntimeError(
+            f"Could not find a JSON strategy in the model response:\n{text[:400]}"
+        )
+    try:
+        data = json.loads(match.group(1))
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"Failed to parse strategy JSON: {exc}\nRaw text:\n{text[:400]}"
+        ) from exc
+
+    if "steps" not in data:
+        raise RuntimeError(
+            f"Parsed JSON is missing required 'steps' key: {data}"
+        )
+    return data.get("steps", []), data.get("narrative", "")
+
+
 # ---------------------------------------------------------------------------
 # Researcher
 # ---------------------------------------------------------------------------
@@ -89,10 +59,9 @@ def _load_transform_metadata() -> list[dict[str, Any]]:
 class PostprocessingResearcher(AbstractResearcher):
     """LLM-driven search for the best postprocessing strategy.
 
-    At each iteration, Claude proposes a postprocessing strategy as structured
-    JSON via tool use. The strategy is evaluated by ``PostprocessingEvaluator``
-    (which calls ``mist_postprocess``). Results feed back to Claude on the next
-    iteration.
+    Proposals are made by calling ``claude -p`` (Claude Code CLI) so no
+    separate Anthropic API key or billing account is required — it runs on
+    the active Claude Code session.
 
     Args:
         config: Path to ``config.json`` from ``mist_analyze``.
@@ -100,10 +69,9 @@ class PostprocessingResearcher(AbstractResearcher):
         test_csv: CSV with ``id`` and ``mask`` columns (ground truth paths).
         output_dir: Root directory for run outputs.
         stopping: Stopping criteria.
-        model: Anthropic model ID.
+        model: Model name forwarded to ``claude --model``. Pass ``None`` to
+            use Claude Code's default model.
         num_workers: Forwarded to the evaluator for parallel postprocessing.
-        client: Optional pre-configured ``anthropic.Anthropic`` client
-            (useful for testing / custom retry/timeout settings).
     """
 
     def __init__(
@@ -113,13 +81,12 @@ class PostprocessingResearcher(AbstractResearcher):
         test_csv: Path,
         output_dir: Path,
         stopping: StoppingCriteria,
-        model: str = "claude-opus-4-8",
+        model: str | None = None,
         num_workers: int = 1,
-        client: anthropic.Anthropic | None = None,
     ) -> None:
-        super().__init__(output_dir=output_dir, stopping=stopping, model=model)
+        super().__init__(output_dir=output_dir, stopping=stopping, model=model or "")
         self.config = Path(config)
-        self._client = client or anthropic.Anthropic()
+        self._model = model
         self._config_data: dict = json.loads(self.config.read_text())
         self.evaluator = PostprocessingEvaluator(
             predictions_dir=Path(predictions_dir),
@@ -155,29 +122,19 @@ class PostprocessingResearcher(AbstractResearcher):
         }
 
     def propose(self, context: dict) -> tuple[list, str]:
-        """Call Claude with the current context and return (steps, narrative).
+        """Call ``claude -p`` and return (steps, narrative).
 
         Raises:
-            RuntimeError: If the model does not return a tool-use block.
+            RuntimeError: If the response cannot be parsed as a valid strategy.
+            subprocess.CalledProcessError: If the ``claude`` CLI exits non-zero.
         """
         prompt = self._build_prompt(context)
-        response = self._client.messages.create(
-            model=self.model,
-            max_tokens=4096,
-            tools=[STRATEGY_TOOL],
-            messages=[{"role": "user", "content": prompt}],
-        )
+        cmd = ["claude", "-p", prompt]
+        if self._model:
+            cmd = ["claude", "-p", "--model", self._model, prompt]
 
-        for block in response.content:
-            if block.type == "tool_use" and block.name == "submit_strategy":
-                steps = block.input.get("steps", [])
-                narrative = block.input.get("narrative", "")
-                return steps, narrative
-
-        raise RuntimeError(
-            "Model did not return a strategy via tool use. "
-            f"Stop reason: {response.stop_reason}."
-        )
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        return _parse_strategy_response(result.stdout)
 
     # ------------------------------------------------------------------
     # Prompt construction
@@ -195,8 +152,7 @@ class PostprocessingResearcher(AbstractResearcher):
         parts = [
             "You are a medical image postprocessing researcher. Your goal is to "
             "find the best postprocessing strategy to improve segmentation quality "
-            "for a 3D medical image segmentation task. You propose one strategy "
-            "per iteration using the submit_strategy tool.",
+            "for a 3D medical image segmentation task.",
             "",
             "## Dataset",
             f"- Segmentation labels: {labels}",
@@ -237,9 +193,29 @@ class PostprocessingResearcher(AbstractResearcher):
             ]
 
         parts += [
-            "Propose the next postprocessing strategy using the submit_strategy "
-            "tool. Avoid repeating strategies already tried. Explain your "
-            "reasoning based on the results so far.",
+            "Propose the next postprocessing strategy to try. Avoid repeating "
+            "strategies already tried. Explain your reasoning based on the "
+            "results so far.",
+            "",
+            "Respond with ONLY a JSON object in a ```json code block. "
+            "The object must have exactly two keys:",
+            '  "steps": a list of strategy step objects (may be empty [])',
+            '  "narrative": a string explaining your reasoning',
+            "",
+            "Example:",
+            "```json",
+            json.dumps({
+                "steps": [
+                    {
+                        "transform": "remove_small_objects",
+                        "apply_to_labels": [-1],
+                        "per_label": False,
+                        "kwargs": {"small_object_threshold": 100},
+                    }
+                ],
+                "narrative": "Removing small spurious components to reduce false positives.",
+            }, indent=2),
+            "```",
         ]
 
         return "\n".join(parts)

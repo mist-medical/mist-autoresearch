@@ -20,7 +20,6 @@ keywords = [
     "LLM",
 ]
 dependencies = [
-    "anthropic>=0.25.0",
     "mist-medical",
     "pandas",
     "rich",

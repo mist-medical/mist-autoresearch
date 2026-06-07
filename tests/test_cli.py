@@ -42,7 +42,7 @@ class TestParser:
         assert ns.alpha == 0.05
         assert ns.min_iterations == 5
         assert ns.min_patients_for_significance == 15
-        assert ns.model == "claude-opus-4-8"
+        assert ns.model is None
         assert ns.num_workers == 1
 
     def test_postprocessing_custom_stopping(self, tmp_path):

@@ -92,8 +92,8 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Root output directory for the run.",
     )
     pp.add_argument(
-        "--model", type=str, default="claude-opus-4-8",
-        help="Anthropic model ID for the proposal step. (default: claude-opus-4-8)",
+        "--model", type=str, default=None,
+        help="Model name forwarded to 'claude --model'. Defaults to Claude Code's active model.",
     )
     pp.add_argument(
         "--num-workers", type=int, default=1,
