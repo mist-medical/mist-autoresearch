@@ -1,4 +1,5 @@
 """PostprocessingResearcher: LLM-driven postprocessing strategy search."""
+
 import json
 import re
 import subprocess
@@ -17,8 +18,10 @@ from .evaluator import PostprocessingEvaluator
 # Helper
 # ---------------------------------------------------------------------------
 
+
 def _load_transform_metadata() -> list[dict[str, Any]]:
     from mist.postprocessing.transform_registry import describe_transforms
+
     return describe_transforms()
 
 
@@ -46,15 +49,14 @@ def _parse_strategy_response(text: str) -> tuple[list, str]:
         ) from exc
 
     if "steps" not in data:
-        raise RuntimeError(
-            f"Parsed JSON is missing required 'steps' key: {data}"
-        )
+        raise RuntimeError(f"Parsed JSON is missing required 'steps' key: {data}")
     return data.get("steps", []), data.get("narrative", "")
 
 
 # ---------------------------------------------------------------------------
 # Researcher
 # ---------------------------------------------------------------------------
+
 
 class PostprocessingResearcher(AbstractResearcher):
     """LLM-driven search for the best postprocessing strategy.
@@ -204,17 +206,20 @@ class PostprocessingResearcher(AbstractResearcher):
             "",
             "Example:",
             "```json",
-            json.dumps({
-                "steps": [
-                    {
-                        "transform": "remove_small_objects",
-                        "apply_to_labels": [-1],
-                        "per_label": False,
-                        "kwargs": {"small_object_threshold": 100},
-                    }
-                ],
-                "narrative": "Removing small spurious components to reduce false positives.",
-            }, indent=2),
+            json.dumps(
+                {
+                    "steps": [
+                        {
+                            "transform": "remove_small_objects",
+                            "apply_to_labels": [-1],
+                            "per_label": False,
+                            "kwargs": {"small_object_threshold": 100},
+                        }
+                    ],
+                    "narrative": "Removing small spurious components to reduce false positives.",
+                },
+                indent=2,
+            ),
             "```",
         ]
 

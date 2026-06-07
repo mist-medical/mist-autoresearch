@@ -1,4 +1,5 @@
 """Command-line entry point for mist_autoresearch."""
+
 import argparse
 from pathlib import Path
 
@@ -8,23 +9,33 @@ from mist_autoresearch.stopping import StoppingCriteria
 
 def _add_stopping_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
-        "--max-iterations", type=int, default=50,
+        "--max-iterations",
+        type=int,
+        default=50,
         help="Hard stop after this many iterations. (default: 50)",
     )
     parser.add_argument(
-        "--patience", type=int, default=10,
+        "--patience",
+        type=int,
+        default=10,
         help="Stop early after this many consecutive iterations with no improvement. (default: 10)",
     )
     parser.add_argument(
-        "--alpha", type=float, default=0.05,
+        "--alpha",
+        type=float,
+        default=0.05,
         help="Significance threshold for the Wilcoxon stopping gate. (default: 0.05)",
     )
     parser.add_argument(
-        "--min-iterations", type=int, default=5,
+        "--min-iterations",
+        type=int,
+        default=5,
         help="Minimum iterations before early stopping is considered. (default: 5)",
     )
     parser.add_argument(
-        "--min-patients-for-significance", type=int, default=15,
+        "--min-patients-for-significance",
+        type=int,
+        default=15,
         help=(
             "Skip the significance gate if the dataset has fewer patients than "
             "this. (default: 15)"
@@ -76,27 +87,39 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     pp.add_argument(
-        "--config", type=str, required=True,
+        "--config",
+        type=str,
+        required=True,
         help="Path to config.json from mist_analyze.",
     )
     pp.add_argument(
-        "--predictions", type=str, required=True,
+        "--predictions",
+        type=str,
+        required=True,
         help="Directory of baseline NIfTI predictions from mist_predict.",
     )
     pp.add_argument(
-        "--test-csv", type=str, required=True,
+        "--test-csv",
+        type=str,
+        required=True,
         help="CSV with 'id' and 'mask' columns pointing to ground truth masks.",
     )
     pp.add_argument(
-        "--output", type=str, required=True,
+        "--output",
+        type=str,
+        required=True,
         help="Root output directory for the run.",
     )
     pp.add_argument(
-        "--model", type=str, default=None,
+        "--model",
+        type=str,
+        default=None,
         help="Model name forwarded to 'claude --model'. Defaults to Claude Code's active model.",
     )
     pp.add_argument(
-        "--num-workers", type=int, default=1,
+        "--num-workers",
+        type=int,
+        default=1,
         help="Number of parallel workers for postprocessing and evaluation. (default: 1)",
     )
     _add_stopping_args(pp)

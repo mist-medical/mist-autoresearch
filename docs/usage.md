@@ -1,5 +1,4 @@
-Usage
-=====
+# Usage
 
 ## Overview
 
@@ -9,9 +8,9 @@ feeding results back to the model until a stopping criterion is met.
 
 ## Commands
 
-| Command | Description |
-|---|---|
-| `mist_autoresearch postprocessing` | Search for the best postprocessing strategy |
+| Command                              | Description                              |
+|--------------------------------------|------------------------------------------|
+| `mist_autoresearch postprocessing`   | Search for the best postprocessing strategy |
 
 ## Postprocessing
 
@@ -24,35 +23,34 @@ mist_autoresearch postprocessing \
   --max-iterations 50 \
   --patience 10 \
   --alpha 0.05 \
-  --min-iterations 5 \
-  --model claude-opus-4-8
+  --min-iterations 5
 ```
 
 ### Required arguments
 
-| Flag | Description |
-|---|---|
-| `--config` | Path to `config.json` from `mist_analyze`. |
-| `--predictions` | Directory of baseline NIfTI predictions from `mist_predict`. |
-| `--test-csv` | CSV with `id` and `mask` columns (ground truth paths). |
-| `--output` | Root output directory for the run. |
+| Flag              | Description                                              |
+|-------------------|----------------------------------------------------------|
+| `--config`        | Path to `config.json` from `mist_analyze`.               |
+| `--predictions`   | Directory of baseline NIfTI predictions from `mist_predict`. |
+| `--test-csv`      | CSV with `id` and `mask` columns (ground truth paths).   |
+| `--output`        | Root output directory for the run.                       |
 
 ### Stopping criteria
 
-| Flag | Default | Description |
-|---|---|---|
-| `--max-iterations` | `50` | Hard stop after this many iterations. |
-| `--patience` | `10` | Stop early if no improvement for this many consecutive iterations. |
-| `--alpha` | `0.05` | Significance threshold (Wilcoxon p-value, best strategy vs. baseline). |
-| `--min-iterations` | `5` | Minimum iterations before early stopping is considered. |
-| `--min-patients-for-significance` | `15` | Skip significance gate if dataset is smaller than this. |
+| Flag                              | Default | Description                                                          |
+|-----------------------------------|---------|----------------------------------------------------------------------|
+| `--max-iterations`                | `50`    | Hard stop after this many iterations.                               |
+| `--patience`                      | `10`    | Stop early if no improvement for this many consecutive iterations.  |
+| `--alpha`                         | `0.05`  | Significance threshold (Wilcoxon p-value, best strategy vs. baseline). |
+| `--min-iterations`                | `5`     | Minimum iterations before early stopping is considered.             |
+| `--min-patients-for-significance` | `15`    | Skip significance gate if dataset is smaller than this.             |
 
 ### Other options
 
-| Flag | Default | Description |
-|---|---|---|
-| `--model` | *(Claude Code default)* | Model name forwarded to `claude --model`. Omit to use Claude Code's active model. |
-| `--num-workers` | `1` | Parallel workers for postprocessing and evaluation. |
+| Flag            | Default                  | Description                                                      |
+|-----------------|--------------------------|------------------------------------------------------------------|
+| `--model`       | *(Claude Code default)*  | Model name forwarded to `claude --model`. Omit to use Claude Code's active model. |
+| `--num-workers` | `1`                      | Parallel workers for postprocessing and evaluation.              |
 
 ## Output structure
 
@@ -84,11 +82,10 @@ The loop stops when **any** of the following conditions is met:
    consecutive iterations, AND the dataset has fewer than
    `--min-patients-for-significance` patients (significance test skipped).
 3. **Patience + significance** — Patience criterion is met AND the best
-   strategy is significantly better than baseline
-   (p < `--alpha`, one-sided Wilcoxon signed-rank test on per-patient mean ranks).
+   strategy is significantly better than baseline (p < `--alpha`, one-sided
+   Wilcoxon signed-rank test on per-patient mean ranks).
 
-At least `--min-iterations` iterations must run before criteria 2 and 3 are
-checked.
+At least `--min-iterations` iterations must run before criteria 2 and 3 are checked.
 
 ## research_notebook.md
 
@@ -117,7 +114,7 @@ researcher = PostprocessingResearcher(
     test_csv=Path("data/test.csv"),
     output_dir=Path("autoresearch/postprocessing/run1"),
     stopping=stopping,
-    model="claude-opus-4-8",
+    # model="claude-opus-4-8",  # omit to use Claude Code's active model
 )
 
 best_strategy = researcher.run()

@@ -1,5 +1,4 @@
-Getting Started
-===============
+# Getting Started
 
 ## Requirements
 
@@ -10,7 +9,7 @@ Getting Started
 ## Install
 
 ```console
-git clone https://github.com/aecelaya/mist-autoresearch.git
+git clone https://github.com/mist-medical/mist-autoresearch.git
 cd mist-autoresearch
 pip install -e .
 ```
@@ -19,11 +18,11 @@ pip install -e .
 
 Before running `mist_autoresearch`, you need a completed MIST experiment:
 
-| What you need | Where it comes from |
-|---|---|
-| `config.json` | Output of `mist_analyze` |
-| Predictions directory | Output of `mist_predict` |
-| Test CSV (`id`, `mask` columns) | Your data split |
+| What you need              | Where it comes from     |
+|----------------------------|-------------------------|
+| `config.json`              | Output of `mist_analyze` |
+| Predictions directory      | Output of `mist_predict` |
+| Test CSV (`id`, `mask` columns) | Your data split    |
 
 ## Quick Start
 

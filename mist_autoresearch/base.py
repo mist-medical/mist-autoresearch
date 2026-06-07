@@ -1,4 +1,5 @@
 """Abstract base class for all autoresearch loops."""
+
 import json
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -149,9 +150,7 @@ class AbstractResearcher(ABC):
                 iterations_since_improvement += 1
 
             # p-value used for stopping: best strategy vs baseline.
-            best_p_vs_baseline = _get_p_vs_baseline(
-                significance_df, best_strategy_name
-            )
+            best_p_vs_baseline = _get_p_vs_baseline(significance_df, best_strategy_name)
 
             # p-value for the notebook: current iteration vs baseline.
             iter_p_vs_baseline = _get_p_vs_baseline(significance_df, iter_name)
@@ -209,9 +208,7 @@ class AbstractResearcher(ABC):
             len(all_results) >= 2
             and n_patients >= self.stopping.min_patients_for_significance
         ):
-            sig_df = compute_pairwise_significance(
-                results=all_results, names=all_names
-            )
+            sig_df = compute_pairwise_significance(results=all_results, names=all_names)
             sig_df.to_csv(self.output_dir / "significance.csv")
 
         return rank_df, sig_df
@@ -236,6 +233,7 @@ class AbstractResearcher(ABC):
 # Module-level helpers (testable without instantiating a researcher)
 # ---------------------------------------------------------------------------
 
+
 def _get_mean_rank(rank_df: pd.DataFrame, name: str) -> float:
     """Return the average_rank for a named strategy, or inf if not found."""
     row = rank_df[rank_df["strategy"] == name]
@@ -244,9 +242,7 @@ def _get_mean_rank(rank_df: pd.DataFrame, name: str) -> float:
     return float(row["average_rank"].iloc[0])
 
 
-def _get_p_vs_baseline(
-    sig_df: pd.DataFrame | None, name: str
-) -> float | None:
+def _get_p_vs_baseline(sig_df: pd.DataFrame | None, name: str) -> float | None:
     """Return p-value for strategy *name* being better than baseline.
 
     Returns None if the significance matrix is unavailable, the strategy is
@@ -260,6 +256,7 @@ def _get_p_vs_baseline(
         return None
     val = sig_df.loc[name, "baseline"]
     import math
+
     if math.isnan(float(val)):
         return None
     return float(val)

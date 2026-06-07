@@ -1,11 +1,9 @@
 """Tests for mist_autoresearch.stopping."""
-import pytest
 
 from mist_autoresearch.stopping import StoppingCriteria
 
 
 class TestStoppingCriteria:
-
     def _sc(self, **kwargs) -> StoppingCriteria:
         defaults = dict(
             max_iterations=10,
@@ -75,21 +73,33 @@ class TestStoppingCriteria:
     # ------------------------------------------------------------------
 
     def test_exactly_at_patience_boundary(self):
-        sc = self._sc(patience=5, min_iterations=1, min_patients_for_significance=5,
-                      max_iterations=100)
+        sc = self._sc(
+            patience=5,
+            min_iterations=1,
+            min_patients_for_significance=5,
+            max_iterations=100,
+        )
         stop, reason = sc.should_stop(10, 5, 20, 0.01)
         assert stop is True
         assert reason == "patience+significance"
 
     def test_patience_one_below_boundary(self):
-        sc = self._sc(patience=5, min_iterations=1, min_patients_for_significance=5,
-                      max_iterations=100)
+        sc = self._sc(
+            patience=5,
+            min_iterations=1,
+            min_patients_for_significance=5,
+            max_iterations=100,
+        )
         stop, _ = sc.should_stop(10, 4, 20, 0.01)
         assert stop is False
 
     def test_patience_stop_when_best_is_baseline(self):
-        sc = self._sc(patience=3, min_iterations=1, min_patients_for_significance=5,
-                      max_iterations=100)
+        sc = self._sc(
+            patience=3,
+            min_iterations=1,
+            min_patients_for_significance=5,
+            max_iterations=100,
+        )
         stop, reason = sc.should_stop(5, 3, 20, None)
         assert stop is True
         assert reason == "patience"

@@ -1,4 +1,5 @@
 """Research notebook writer for the autoresearch loop."""
+
 import json
 from pathlib import Path
 

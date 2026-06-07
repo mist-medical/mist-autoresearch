@@ -1,4 +1,5 @@
 """Stopping criteria for the autoresearch loop."""
+
 from dataclasses import dataclass
 
 

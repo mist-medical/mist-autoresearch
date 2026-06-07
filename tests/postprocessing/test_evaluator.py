@@ -1,8 +1,8 @@
 """Tests for mist_autoresearch.postprocessing.evaluator."""
+
 import json
-import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import patch
 
 import pandas as pd
 import pytest
@@ -26,14 +26,13 @@ def _write_results(output_dir: Path, df: pd.DataFrame) -> None:
 
 
 class TestPostprocessingEvaluator:
-
     def test_run_writes_strategy_json(self, tmp_path):
         ev = _make_evaluator(tmp_path)
         df = pd.DataFrame({"id": ["p1"], "WT_dice": [0.9]})
 
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = lambda cmd, check: _write_results(
-                Path(cmd[cmd.index("--output") + 1]) , df
+                Path(cmd[cmd.index("--output") + 1]), df
             )
             ev.run([{"transform": "remove_small_objects"}], tmp_path / "iter_001")
 
@@ -79,8 +78,9 @@ class TestPostprocessingEvaluator:
             mock_run.side_effect = lambda cmd, check: _write_results(iter_dir, expected)
             result = ev.run([], iter_dir)
 
-        pd.testing.assert_frame_equal(result.reset_index(drop=True),
-                                       expected.reset_index(drop=True))
+        pd.testing.assert_frame_equal(
+            result.reset_index(drop=True), expected.reset_index(drop=True)
+        )
 
     def test_run_raises_if_results_csv_missing(self, tmp_path):
         ev = _make_evaluator(tmp_path)

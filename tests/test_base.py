@@ -1,8 +1,7 @@
 """Tests for mist_autoresearch.base."""
+
 import json
-import math
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pandas as pd
 import pytest
@@ -19,6 +18,7 @@ from mist_autoresearch.stopping import StoppingCriteria
 # Concrete subclass for testing the loop
 # ---------------------------------------------------------------------------
 
+
 class _FakeResearcher(AbstractResearcher):
     """Concrete researcher that returns canned values for testing."""
 
@@ -27,8 +27,7 @@ class _FakeResearcher(AbstractResearcher):
         self._propose_seq = propose_seq or [([], "narrative")]
         self._propose_idx = 0
         self._eval_df = eval_df or pd.DataFrame(
-            {"id": [f"p{i}" for i in range(20)],
-             "WT_dice": [0.9] * 20}
+            {"id": [f"p{i}" for i in range(20)], "WT_dice": [0.9] * 20}
         )
 
     def propose(self, context):
@@ -64,8 +63,8 @@ def _sc(**kwargs) -> StoppingCriteria:
 # Tests for module-level helpers
 # ---------------------------------------------------------------------------
 
-class TestGetMeanRank:
 
+class TestGetMeanRank:
     def test_returns_rank_for_known_strategy(self):
         df = pd.DataFrame({"strategy": ["a", "b"], "average_rank": [1.0, 2.0]})
         assert _get_mean_rank(df, "a") == 1.0
@@ -76,9 +75,9 @@ class TestGetMeanRank:
 
 
 class TestGetPVsBaseline:
-
     def _sig_df(self, p_value):
         import pandas as pd
+
         df = pd.DataFrame(
             {"baseline": {"iter_001": p_value, "baseline": float("nan")}},
         )
@@ -114,17 +113,20 @@ class TestGetPVsBaseline:
 # Tests for the run() loop
 # ---------------------------------------------------------------------------
 
-class TestAbstractResearcherRun:
 
+class TestAbstractResearcherRun:
     def _make_rank_df(self, names, ranks):
         return pd.DataFrame({"strategy": names, "average_rank": ranks})
 
     def test_run_creates_output_dirs(self, tmp_path):
         r = _FakeResearcher(tmp_path / "out", _sc(max_iterations=1))
-        with patch("mist_autoresearch.base.rank_results") as mock_rank, \
-             patch("mist_autoresearch.base.compute_pairwise_significance") as mock_sig:
+        with (
+            patch("mist_autoresearch.base.rank_results") as mock_rank,
+            patch("mist_autoresearch.base.compute_pairwise_significance") as mock_sig,
+        ):
             mock_rank.return_value = (
-                self._make_rank_df(["baseline", "iteration_001"], [1.0, 2.0]), None
+                self._make_rank_df(["baseline", "iteration_001"], [1.0, 2.0]),
+                None,
             )
             mock_sig.return_value = pd.DataFrame(
                 {"baseline": {"iteration_001": 0.03}},
@@ -136,20 +138,26 @@ class TestAbstractResearcherRun:
 
     def test_run_writes_research_notebook(self, tmp_path):
         r = _FakeResearcher(tmp_path / "out", _sc(max_iterations=1))
-        with patch("mist_autoresearch.base.rank_results") as mock_rank, \
-             patch("mist_autoresearch.base.compute_pairwise_significance"):
+        with (
+            patch("mist_autoresearch.base.rank_results") as mock_rank,
+            patch("mist_autoresearch.base.compute_pairwise_significance"),
+        ):
             mock_rank.return_value = (
-                self._make_rank_df(["baseline", "iteration_001"], [1.0, 2.0]), None
+                self._make_rank_df(["baseline", "iteration_001"], [1.0, 2.0]),
+                None,
             )
             r.run()
         assert (tmp_path / "out" / "research_notebook.md").exists()
 
     def test_run_writes_summary_json(self, tmp_path):
         r = _FakeResearcher(tmp_path / "out", _sc(max_iterations=1))
-        with patch("mist_autoresearch.base.rank_results") as mock_rank, \
-             patch("mist_autoresearch.base.compute_pairwise_significance"):
+        with (
+            patch("mist_autoresearch.base.rank_results") as mock_rank,
+            patch("mist_autoresearch.base.compute_pairwise_significance"),
+        ):
             mock_rank.return_value = (
-                self._make_rank_df(["baseline", "iteration_001"], [1.0, 2.0]), None
+                self._make_rank_df(["baseline", "iteration_001"], [1.0, 2.0]),
+                None,
             )
             r.run()
         summary = json.loads((tmp_path / "out" / "summary.json").read_text())
@@ -158,53 +166,70 @@ class TestAbstractResearcherRun:
 
     def test_run_stops_at_max_iterations(self, tmp_path):
         r = _FakeResearcher(tmp_path / "out", _sc(max_iterations=2))
-        with patch("mist_autoresearch.base.rank_results") as mock_rank, \
-             patch("mist_autoresearch.base.compute_pairwise_significance"):
+        with (
+            patch("mist_autoresearch.base.rank_results") as mock_rank,
+            patch("mist_autoresearch.base.compute_pairwise_significance"),
+        ):
             mock_rank.return_value = (
                 self._make_rank_df(
                     ["baseline", "iteration_001", "iteration_002"],
                     [1.0, 2.0, 3.0],
-                ), None
+                ),
+                None,
             )
             r.run()
         assert r._propose_idx == 2
 
     def test_run_returns_best_strategy(self, tmp_path):
-        winning_strategy = [{"transform": "remove_small_objects",
-                             "apply_to_labels": [-1], "per_label": False}]
+        winning_strategy = [
+            {
+                "transform": "remove_small_objects",
+                "apply_to_labels": [-1],
+                "per_label": False,
+            }
+        ]
         r = _FakeResearcher(
             tmp_path / "out",
             _sc(max_iterations=1),
             propose_seq=[(winning_strategy, "winning")],
         )
-        with patch("mist_autoresearch.base.rank_results") as mock_rank, \
-             patch("mist_autoresearch.base.compute_pairwise_significance"):
+        with (
+            patch("mist_autoresearch.base.rank_results") as mock_rank,
+            patch("mist_autoresearch.base.compute_pairwise_significance"),
+        ):
             # iteration_001 wins
             mock_rank.return_value = (
-                self._make_rank_df(["iteration_001", "baseline"], [1.0, 2.0]), None
+                self._make_rank_df(["iteration_001", "baseline"], [1.0, 2.0]),
+                None,
             )
             result = r.run()
         assert result == winning_strategy
 
     def test_run_returns_none_baseline_when_best(self, tmp_path):
         r = _FakeResearcher(tmp_path / "out", _sc(max_iterations=1))
-        with patch("mist_autoresearch.base.rank_results") as mock_rank, \
-             patch("mist_autoresearch.base.compute_pairwise_significance"):
+        with (
+            patch("mist_autoresearch.base.rank_results") as mock_rank,
+            patch("mist_autoresearch.base.compute_pairwise_significance"),
+        ):
             mock_rank.return_value = (
-                self._make_rank_df(["baseline", "iteration_001"], [1.0, 2.0]), None
+                self._make_rank_df(["baseline", "iteration_001"], [1.0, 2.0]),
+                None,
             )
             result = r.run()
         assert result is None  # baseline best → no postprocessing
 
     def test_run_updates_history(self, tmp_path):
         r = _FakeResearcher(tmp_path / "out", _sc(max_iterations=2))
-        with patch("mist_autoresearch.base.rank_results") as mock_rank, \
-             patch("mist_autoresearch.base.compute_pairwise_significance"):
+        with (
+            patch("mist_autoresearch.base.rank_results") as mock_rank,
+            patch("mist_autoresearch.base.compute_pairwise_significance"),
+        ):
             mock_rank.return_value = (
                 self._make_rank_df(
                     ["baseline", "iteration_001", "iteration_002"],
                     [1.0, 2.0, 3.0],
-                ), None
+                ),
+                None,
             )
             r.run()
         assert r.history.n_iterations == 2
@@ -222,10 +247,13 @@ class TestAbstractResearcherRun:
         # patience fires after iter_002, significance (p=0.01) confirms → stop.
         sig_df = pd.DataFrame({"baseline": {"iteration_001": 0.01}}, dtype=float)
 
-        with patch("mist_autoresearch.base.rank_results") as mock_rank, \
-             patch("mist_autoresearch.base.compute_pairwise_significance") as mock_sig:
+        with (
+            patch("mist_autoresearch.base.rank_results") as mock_rank,
+            patch("mist_autoresearch.base.compute_pairwise_significance") as mock_sig,
+        ):
             mock_rank.return_value = (
-                self._make_rank_df(["iteration_001", "baseline"], [1.0, 2.0]), None
+                self._make_rank_df(["iteration_001", "baseline"], [1.0, 2.0]),
+                None,
             )
             mock_sig.return_value = sig_df
             r.run()
@@ -238,16 +266,22 @@ class TestAbstractResearcherRun:
     def test_rank_and_significance_writes_csvs(self, tmp_path):
         r = _FakeResearcher(tmp_path / "out", _sc(max_iterations=1))
         r.output_dir.mkdir(parents=True, exist_ok=True)
-        df1 = pd.DataFrame({"id": [f"p{i}" for i in range(20)], "WT_dice": [0.9]*20})
-        df2 = pd.DataFrame({"id": [f"p{i}" for i in range(20)], "WT_dice": [0.5]*20})
-        with patch("mist_autoresearch.base.rank_results") as mock_rank, \
-             patch("mist_autoresearch.base.compute_pairwise_significance") as mock_sig:
+        df1 = pd.DataFrame({"id": [f"p{i}" for i in range(20)], "WT_dice": [0.9] * 20})
+        df2 = pd.DataFrame({"id": [f"p{i}" for i in range(20)], "WT_dice": [0.5] * 20})
+        with (
+            patch("mist_autoresearch.base.rank_results") as mock_rank,
+            patch("mist_autoresearch.base.compute_pairwise_significance") as mock_sig,
+        ):
             mock_rank.return_value = (
-                pd.DataFrame({"strategy": ["a", "b"], "average_rank": [1.0, 2.0]}), None
+                pd.DataFrame({"strategy": ["a", "b"], "average_rank": [1.0, 2.0]}),
+                None,
             )
             mock_sig.return_value = pd.DataFrame(
-                {"a": {"a": float("nan"), "b": 0.8},
-                 "b": {"a": 0.2, "b": float("nan")}}, dtype=float
+                {
+                    "a": {"a": float("nan"), "b": 0.8},
+                    "b": {"a": 0.2, "b": float("nan")},
+                },
+                dtype=float,
             )
             r._rank_and_significance([df1, df2], ["a", "b"], 20)
         assert (tmp_path / "out" / "rankings.csv").exists()
@@ -259,10 +293,13 @@ class TestAbstractResearcherRun:
         r.output_dir.mkdir(parents=True, exist_ok=True)
         df1 = pd.DataFrame({"id": ["p1"], "WT_dice": [0.9]})
         df2 = pd.DataFrame({"id": ["p1"], "WT_dice": [0.5]})
-        with patch("mist_autoresearch.base.rank_results") as mock_rank, \
-             patch("mist_autoresearch.base.compute_pairwise_significance") as mock_sig:
+        with (
+            patch("mist_autoresearch.base.rank_results") as mock_rank,
+            patch("mist_autoresearch.base.compute_pairwise_significance") as mock_sig,
+        ):
             mock_rank.return_value = (
-                pd.DataFrame({"strategy": ["a", "b"], "average_rank": [1.0, 2.0]}), None
+                pd.DataFrame({"strategy": ["a", "b"], "average_rank": [1.0, 2.0]}),
+                None,
             )
             _, sig_df = r._rank_and_significance([df1, df2], ["a", "b"], 1)
         assert sig_df is None

@@ -1,14 +1,12 @@
 """Tests for mist_autoresearch.history."""
-import json
-from pathlib import Path
 
-import pytest
+import json
+
 
 from mist_autoresearch.history import History
 
 
 class TestHistory:
-
     def test_initial_state_no_file(self, tmp_path):
         h = History(tmp_path / "history.json")
         assert h.iterations == []
@@ -19,9 +17,17 @@ class TestHistory:
     def test_loads_existing_file(self, tmp_path):
         path = tmp_path / "history.json"
         data = {
-            "iterations": [{"iteration": 1, "strategy": [], "narrative": "n",
-                             "results_csv": "r.csv", "mean_rank": 1.0,
-                             "p_value_vs_baseline": None, "timestamp": "t"}],
+            "iterations": [
+                {
+                    "iteration": 1,
+                    "strategy": [],
+                    "narrative": "n",
+                    "results_csv": "r.csv",
+                    "mean_rank": 1.0,
+                    "p_value_vs_baseline": None,
+                    "timestamp": "t",
+                }
+            ],
             "best_iteration": 1,
             "stopped_reason": "patience",
             "started_at": "2026-01-01T00:00:00",

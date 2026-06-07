@@ -1,4 +1,5 @@
 """Evaluator for the postprocessing autoresearch loop."""
+
 import json
 import subprocess
 from pathlib import Path
@@ -61,13 +62,20 @@ class PostprocessingEvaluator:
 
         cmd = [
             "mist_postprocess",
-            "--base-predictions", str(self.predictions_dir),
-            "--output", str(output_dir),
-            "--postprocess-strategy", str(strategy_path),
-            "--paths-csv", str(self.test_csv),
-            "--eval-config", str(self.config),
-            "--num-workers-postprocess", str(self.num_workers),
-            "--num-workers-evaluate", str(self.num_workers),
+            "--base-predictions",
+            str(self.predictions_dir),
+            "--output",
+            str(output_dir),
+            "--postprocess-strategy",
+            str(strategy_path),
+            "--paths-csv",
+            str(self.test_csv),
+            "--eval-config",
+            str(self.config),
+            "--num-workers-postprocess",
+            str(self.num_workers),
+            "--num-workers-evaluate",
+            str(self.num_workers),
         ]
         subprocess.run(cmd, check=True)
 

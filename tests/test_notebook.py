@@ -1,9 +1,6 @@
 """Tests for mist_autoresearch.notebook."""
-import json
-from pathlib import Path
 
 import pandas as pd
-import pytest
 
 from mist_autoresearch.notebook import ResearchNotebook
 
@@ -13,7 +10,6 @@ def _make_results(ids=("p1", "p2"), dice=(0.9, 0.8)) -> pd.DataFrame:
 
 
 class TestResearchNotebook:
-
     def test_write_header_creates_file(self, tmp_path):
         nb = ResearchNotebook(tmp_path / "notebook.md")
         nb.write_header()
@@ -54,10 +50,23 @@ class TestResearchNotebook:
     def test_write_iteration_appends_section(self, tmp_path):
         nb = ResearchNotebook(tmp_path / "notebook.md")
         nb.write_header()
-        strategy = [{"transform": "remove_small_objects", "apply_to_labels": [-1],
-                     "per_label": False, "kwargs": {}}]
-        nb.write_iteration(1, strategy, "Test narrative", _make_results(),
-                           mean_rank=1.5, p_value=0.03, is_best=True)
+        strategy = [
+            {
+                "transform": "remove_small_objects",
+                "apply_to_labels": [-1],
+                "per_label": False,
+                "kwargs": {},
+            }
+        ]
+        nb.write_iteration(
+            1,
+            strategy,
+            "Test narrative",
+            _make_results(),
+            mean_rank=1.5,
+            p_value=0.03,
+            is_best=True,
+        )
         text = (tmp_path / "notebook.md").read_text()
         assert "## Iteration 1" in text
         assert "Test narrative" in text
@@ -69,16 +78,30 @@ class TestResearchNotebook:
     def test_write_iteration_no_p_value(self, tmp_path):
         nb = ResearchNotebook(tmp_path / "notebook.md")
         nb.write_header()
-        nb.write_iteration(1, [], "narrative", _make_results(),
-                           mean_rank=2.0, p_value=None, is_best=False)
+        nb.write_iteration(
+            1,
+            [],
+            "narrative",
+            _make_results(),
+            mean_rank=2.0,
+            p_value=None,
+            is_best=False,
+        )
         text = (tmp_path / "notebook.md").read_text()
         assert "p-value vs baseline" not in text
 
     def test_write_iteration_not_best_omits_label(self, tmp_path):
         nb = ResearchNotebook(tmp_path / "notebook.md")
         nb.write_header()
-        nb.write_iteration(1, [], "narrative", _make_results(),
-                           mean_rank=2.0, p_value=None, is_best=False)
+        nb.write_iteration(
+            1,
+            [],
+            "narrative",
+            _make_results(),
+            mean_rank=2.0,
+            p_value=None,
+            is_best=False,
+        )
         text = (tmp_path / "notebook.md").read_text()
         assert "New best!" not in text
 
@@ -95,8 +118,14 @@ class TestResearchNotebook:
     def test_strategy_serialised_as_json(self, tmp_path):
         nb = ResearchNotebook(tmp_path / "notebook.md")
         nb.write_header()
-        strategy = [{"transform": "fill_holes_with_label", "apply_to_labels": [1],
-                     "per_label": True, "kwargs": {"fill_holes_label": 0}}]
+        strategy = [
+            {
+                "transform": "fill_holes_with_label",
+                "apply_to_labels": [1],
+                "per_label": True,
+                "kwargs": {"fill_holes_label": 0},
+            }
+        ]
         nb.write_iteration(1, strategy, "n", _make_results(), 1.0, None, True)
         text = (tmp_path / "notebook.md").read_text()
         assert "fill_holes_with_label" in text
