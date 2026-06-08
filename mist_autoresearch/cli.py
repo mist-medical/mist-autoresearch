@@ -63,6 +63,7 @@ def _run_postprocessing(ns: argparse.Namespace) -> None:
         stopping=stopping,
         model=ns.model,
         num_workers=ns.num_workers,
+        additional_prompt=Path(ns.additional_prompt) if ns.additional_prompt else None,
     )
     researcher.run()
 
@@ -109,6 +110,17 @@ def _build_parser() -> argparse.ArgumentParser:
         type=str,
         required=True,
         help="Root output directory for the run.",
+    )
+    pp.add_argument(
+        "--additional-prompt",
+        type=str,
+        default=None,
+        metavar="FILE",
+        help=(
+            "Path to a Markdown file injected into every proposal prompt as "
+            "'## Additional Context'. Use it to share dataset knowledge, "
+            "evaluation criteria, or transform suggestions with the agent."
+        ),
     )
     pp.add_argument(
         "--model",

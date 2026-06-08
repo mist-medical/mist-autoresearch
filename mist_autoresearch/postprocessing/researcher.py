@@ -74,6 +74,10 @@ class PostprocessingResearcher(AbstractResearcher):
         model: Model name forwarded to ``claude --model``. Pass ``None`` to
             use Claude Code's default model.
         num_workers: Forwarded to the evaluator for parallel postprocessing.
+        additional_prompt: Optional path to a Markdown file whose contents are
+            injected into every proposal prompt under "## Additional Context".
+            Use it to share dataset-specific knowledge, evaluation criteria,
+            hypotheses, or transform suggestions with the agent.
     """
 
     def __init__(
@@ -85,10 +89,14 @@ class PostprocessingResearcher(AbstractResearcher):
         stopping: StoppingCriteria,
         model: str | None = None,
         num_workers: int = 1,
+        additional_prompt: Path | str | None = None,
     ) -> None:
         super().__init__(output_dir=output_dir, stopping=stopping)
         self.config = Path(config)
         self._model = model
+        self._additional_prompt: str | None = (
+            Path(additional_prompt).read_text() if additional_prompt else None
+        )
         self._config_data: dict = json.loads(self.config.read_text())
         self.evaluator = PostprocessingEvaluator(
             predictions_dir=Path(predictions_dir),
@@ -159,6 +167,16 @@ class PostprocessingResearcher(AbstractResearcher):
             "## Dataset",
             f"- Segmentation labels: {labels}",
             f"- Final classes: {json.dumps(final_classes)}",
+        ]
+
+        if self._additional_prompt:
+            parts += [
+                "",
+                "## Additional Context",
+                self._additional_prompt,
+            ]
+
+        parts += [
             "",
             "## Available Transforms",
             json.dumps(transforms, indent=2),

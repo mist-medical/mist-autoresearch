@@ -47,10 +47,41 @@ mist_autoresearch postprocessing \
 
 ### Other options
 
-| Flag            | Default                  | Description                                                      |
-|-----------------|--------------------------|------------------------------------------------------------------|
-| `--model`       | *(Claude Code default)*  | Model name forwarded to `claude --model`. Omit to use Claude Code's active model. |
-| `--num-workers` | `1`                      | Parallel workers for postprocessing and evaluation.              |
+| Flag                  | Default                  | Description                                                      |
+|-----------------------|--------------------------|------------------------------------------------------------------|
+| `--additional-prompt` | *(none)*                 | Path to a Markdown file injected into every proposal prompt as `## Additional Context`. Use it to share dataset knowledge, evaluation criteria, or transform suggestions. |
+| `--model`             | *(Claude Code default)*  | Model name forwarded to `claude --model`. Omit to use Claude Code's active model. |
+| `--num-workers`       | `1`                      | Parallel workers for postprocessing and evaluation.              |
+
+### Using `--additional-prompt`
+
+Create a Markdown file describing anything the agent should know about your specific dataset or task:
+
+```markdown
+## Dataset Notes
+This is BraTS 2026 glioma segmentation. Labels: 1=necrosis, 2=edema, 3=enhancing tumour.
+Final classes: ET (label 3), TC (labels 1+3), WT (labels 1+2+3).
+
+## Evaluation Criteria
+Dice is the primary metric. Focus on ET and TC — WT tends to be high already.
+
+## Suggestions
+Small isolated components in the ET class are common false positives.
+Try aggressive small-object removal on label 3 before anything else.
+```
+
+Then pass it to the run:
+
+```console
+mist_autoresearch postprocessing \
+  --config results/config.json \
+  --predictions predictions/test \
+  --test-csv data/test.csv \
+  --output autoresearch/postprocessing/run1 \
+  --additional-prompt context.md
+```
+
+The file contents are included verbatim in every proposal prompt. You can update and resume the run with a revised file if you want to steer the agent mid-run.
 
 ## Output structure
 
@@ -127,7 +158,8 @@ researcher = PostprocessingResearcher(
     test_csv=Path("data/test.csv"),
     output_dir=Path("autoresearch/postprocessing/run1"),
     stopping=stopping,
-    # model="claude-opus-4-8",  # omit to use Claude Code's active model
+    # model="claude-opus-4-8",      # omit to use Claude Code's active model
+    # additional_prompt=Path("context.md"),  # optional dataset/task notes
 )
 
 best_strategy = researcher.run()

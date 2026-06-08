@@ -56,6 +56,7 @@ class TestParser:
         assert ns.min_patients_for_significance == 15
         assert ns.model is None
         assert ns.num_workers == 1
+        assert ns.additional_prompt is None
 
     def test_postprocessing_custom_stopping(self, tmp_path):
         ns = self._parse(
@@ -149,6 +150,7 @@ class TestRunPostprocessing:
             min_patients_for_significance=5,
             model="claude-opus-4-8",
             num_workers=1,
+            additional_prompt=None,
         )
         with patch("mist_autoresearch.cli.PostprocessingResearcher") as MockResearcher:
             mock_instance = MagicMock()

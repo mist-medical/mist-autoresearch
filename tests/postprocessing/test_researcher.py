@@ -122,6 +122,24 @@ class TestPostprocessingResearcherInit:
         r = _make_researcher(tmp_path)
         assert r._model is None
 
+    def test_additional_prompt_none_by_default(self, tmp_path):
+        r = _make_researcher(tmp_path)
+        assert r._additional_prompt is None
+
+    def test_additional_prompt_reads_file(self, tmp_path):
+        md = tmp_path / "context.md"
+        md.write_text("Focus on small objects.")
+        config = _make_config(tmp_path)
+        r = PostprocessingResearcher(
+            config=config,
+            predictions_dir=tmp_path / "preds",
+            test_csv=tmp_path / "test.csv",
+            output_dir=tmp_path / "out",
+            stopping=StoppingCriteria(max_iterations=1),
+            additional_prompt=md,
+        )
+        assert r._additional_prompt == "Focus on small objects."
+
 
 # ---------------------------------------------------------------------------
 # propose()
@@ -413,6 +431,35 @@ class TestBuildPrompt:
         }
         prompt = r._build_prompt(ctx)
         assert "Significance" in prompt
+
+    def test_prompt_includes_additional_context_when_set(self, tmp_path):
+        r = _make_researcher(tmp_path)
+        r._additional_prompt = "Prioritise label 1 — it covers the tumour core."
+        ctx = {
+            "config": r._config_data,
+            "transforms": [],
+            "baseline_results": [],
+            "rank_df": None,
+            "significance": None,
+            "history": [],
+        }
+        prompt = r._build_prompt(ctx)
+        assert "## Additional Context" in prompt
+        assert "Prioritise label 1" in prompt
+
+    def test_prompt_excludes_additional_context_when_none(self, tmp_path):
+        r = _make_researcher(tmp_path)
+        assert r._additional_prompt is None
+        ctx = {
+            "config": r._config_data,
+            "transforms": [],
+            "baseline_results": [],
+            "rank_df": None,
+            "significance": None,
+            "history": [],
+        }
+        prompt = r._build_prompt(ctx)
+        assert "## Additional Context" not in prompt
 
 
 # ---------------------------------------------------------------------------
