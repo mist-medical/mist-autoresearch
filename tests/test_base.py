@@ -1,6 +1,7 @@
 """Tests for mist_autoresearch.base."""
 
 import json
+from pathlib import Path
 from unittest.mock import patch
 
 import pandas as pd
@@ -311,3 +312,200 @@ class TestAbstractResearcherRun:
         r._write_summary("baseline", None, float("inf"))
         summary = json.loads((tmp_path / "out" / "summary.json").read_text())
         assert summary["best_overall_rank"] is None
+
+
+# ---------------------------------------------------------------------------
+# Tests for resume (_recover_state, _recompute_tracking, run() with history)
+# ---------------------------------------------------------------------------
+
+
+def _seed_run(out: Path, n_iterations: int = 1, best_iteration=None) -> None:
+    """Write a partial run to *out* without executing any real evaluation."""
+    out.mkdir(parents=True, exist_ok=True)
+
+    df = pd.DataFrame({"id": [f"p{i}" for i in range(20)], "WT_dice": [0.9] * 20})
+
+    baseline_dir = out / "baseline"
+    baseline_dir.mkdir()
+    df.to_csv(baseline_dir / "postprocess_results.csv", index=False)
+
+    strategy = [
+        {
+            "transform": "remove_small_objects",
+            "apply_to_labels": [-1],
+            "per_label": False,
+        }
+    ]
+    history_data = {
+        "iterations": [],
+        "best_iteration": best_iteration,
+        "stopped_reason": None,
+        "started_at": "2026-01-01T00:00:00",
+    }
+
+    for i in range(1, n_iterations + 1):
+        iter_dir = out / f"iteration_{i:03d}"
+        iter_dir.mkdir()
+        (iter_dir / "strategy.json").write_text(json.dumps(strategy))
+        df.to_csv(iter_dir / "postprocess_results.csv", index=False)
+        history_data["iterations"].append(
+            {
+                "iteration": i,
+                "strategy": strategy,
+                "narrative": "test",
+                "results_csv": str(iter_dir / "postprocess_results.csv"),
+                "mean_rank": 1.5,
+                "p_value_vs_baseline": 0.5,
+                "timestamp": "2026-01-01T00:00:00",
+            }
+        )
+
+    (out / "history.json").write_text(json.dumps(history_data))
+
+
+class TestResume:
+    def _make_rank_df(self, names, ranks):
+        return pd.DataFrame({"strategy": names, "average_rank": ranks})
+
+    # ------------------------------------------------------------------
+    # _recover_state
+    # ------------------------------------------------------------------
+
+    def test_recover_state_loads_baseline_and_iterations(self, tmp_path):
+        out = tmp_path / "out"
+        _seed_run(out, n_iterations=2)
+        r = _FakeResearcher(out, _sc())
+        baseline, all_results, all_names, all_strategies = r._recover_state()
+        assert list(baseline.columns) == ["id", "WT_dice"]
+        assert all_names == ["baseline", "iteration_001", "iteration_002"]
+        assert len(all_results) == 3
+        assert all_strategies[0] is None
+        assert all_strategies[1] is not None
+
+    def test_recover_state_raises_if_baseline_csv_missing(self, tmp_path):
+        out = tmp_path / "out"
+        _seed_run(out, n_iterations=1)
+        (out / "baseline" / "postprocess_results.csv").unlink()
+        r = _FakeResearcher(out, _sc())
+        with pytest.raises(FileNotFoundError, match="baseline results not found"):
+            r._recover_state()
+
+    def test_recover_state_raises_if_iteration_csv_missing(self, tmp_path):
+        out = tmp_path / "out"
+        _seed_run(out, n_iterations=1)
+        (out / "iteration_001" / "postprocess_results.csv").unlink()
+        r = _FakeResearcher(out, _sc())
+        with pytest.raises(FileNotFoundError, match="results missing for iteration"):
+            r._recover_state()
+
+    # ------------------------------------------------------------------
+    # _recompute_tracking
+    # ------------------------------------------------------------------
+
+    def test_recompute_tracking_baseline_best(self, tmp_path):
+        out = tmp_path / "out"
+        _seed_run(out, n_iterations=2, best_iteration=None)
+        r = _FakeResearcher(out, _sc())
+        rank_df = self._make_rank_df(
+            ["baseline", "iteration_001", "iteration_002"], [1.0, 2.0, 3.0]
+        )
+        best_rank, best_name, since = r._recompute_tracking(rank_df)
+        assert best_name == "baseline"
+        assert best_rank == 1.0
+        assert since == 2  # no iteration ever beat baseline → n_iterations
+
+    def test_recompute_tracking_iteration_best(self, tmp_path):
+        out = tmp_path / "out"
+        _seed_run(out, n_iterations=3, best_iteration=1)
+        r = _FakeResearcher(out, _sc())
+        rank_df = self._make_rank_df(
+            ["iteration_001", "iteration_002", "iteration_003", "baseline"],
+            [1.0, 2.0, 3.0, 4.0],
+        )
+        _, best_name, since = r._recompute_tracking(rank_df)
+        assert best_name == "iteration_001"
+        assert since == 2  # n_iterations(3) - best_iteration(1) = 2
+
+    # ------------------------------------------------------------------
+    # run() resume behaviour
+    # ------------------------------------------------------------------
+
+    def test_run_resumes_from_correct_iteration(self, tmp_path):
+        out = tmp_path / "out"
+        _seed_run(out, n_iterations=1)
+        r = _FakeResearcher(out, _sc(max_iterations=3))
+        with (
+            patch("mist_autoresearch.base.rank_results") as mock_rank,
+            patch("mist_autoresearch.base.compute_pairwise_significance"),
+        ):
+            mock_rank.return_value = (
+                self._make_rank_df(
+                    ["baseline", "iteration_001", "iteration_002", "iteration_003"],
+                    [1.0, 2.0, 3.0, 4.0],
+                ),
+                None,
+            )
+            r.run()
+        # 1 iteration already done; only iterations 002 and 003 should be proposed
+        assert r._propose_idx == 2
+
+    def test_run_does_not_call_write_header_on_resume(self, tmp_path):
+        out = tmp_path / "out"
+        _seed_run(out, n_iterations=1)
+        r = _FakeResearcher(out, _sc(max_iterations=2))
+        with (
+            patch("mist_autoresearch.base.rank_results") as mock_rank,
+            patch("mist_autoresearch.base.compute_pairwise_significance"),
+            patch(
+                "mist_autoresearch.base.ResearchNotebook.write_header"
+            ) as mock_header,
+        ):
+            mock_rank.return_value = (
+                self._make_rank_df(
+                    ["baseline", "iteration_001", "iteration_002"],
+                    [1.0, 2.0, 3.0],
+                ),
+                None,
+            )
+            r.run()
+        mock_header.assert_not_called()
+
+    def test_run_fresh_start_calls_write_header(self, tmp_path):
+        r = _FakeResearcher(tmp_path / "out", _sc(max_iterations=1))
+        with (
+            patch("mist_autoresearch.base.rank_results") as mock_rank,
+            patch("mist_autoresearch.base.compute_pairwise_significance"),
+            patch(
+                "mist_autoresearch.base.ResearchNotebook.write_header"
+            ) as mock_header,
+        ):
+            mock_rank.return_value = (
+                self._make_rank_df(["baseline", "iteration_001"], [1.0, 2.0]),
+                None,
+            )
+            r.run()
+        mock_header.assert_called_once()
+
+    def test_run_resume_returns_best_strategy(self, tmp_path):
+        out = tmp_path / "out"
+        _seed_run(out, n_iterations=1)
+        # The seeded iteration_001 strategy — resume should return it if it wins.
+        expected = [
+            {
+                "transform": "remove_small_objects",
+                "apply_to_labels": [-1],
+                "per_label": False,
+            }
+        ]
+        r = _FakeResearcher(out, _sc(max_iterations=1))
+        with (
+            patch("mist_autoresearch.base.rank_results") as mock_rank,
+            patch("mist_autoresearch.base.compute_pairwise_significance"),
+        ):
+            # max_iterations=1 already done → loop doesn't run, best from seeded data
+            mock_rank.return_value = (
+                self._make_rank_df(["iteration_001", "baseline"], [1.0, 2.0]),
+                None,
+            )
+            result = r.run()
+        assert result == expected

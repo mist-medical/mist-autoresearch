@@ -90,32 +90,50 @@ class AbstractResearcher(ABC):
     def run(self) -> list | None:
         """Execute the research loop and return the best strategy.
 
+        If a previous run was interrupted, calling ``run()`` again on the same
+        ``output_dir`` resumes from where it left off: completed iterations are
+        loaded from disk and the loop continues from the next iteration number.
+
         Returns:
-            The best strategy (list of steps), or ``[]`` if no postprocessing
-            strategy beat the baseline.  Returns ``None`` if the loop produced
-            no iterations at all.
+            The best strategy (list of steps), or ``None`` if baseline
+            (no postprocessing) was best.
         """
         self.output_dir.mkdir(parents=True, exist_ok=True)
         notebook = ResearchNotebook(self.output_dir / "research_notebook.md")
-        notebook.write_header()
 
-        # Baseline: evaluate with empty strategy (no transforms applied).
-        baseline_dir = self.output_dir / "baseline"
-        baseline_dir.mkdir(parents=True, exist_ok=True)
-        baseline_results = self.evaluate([], baseline_dir)
-        notebook.write_baseline(baseline_results)
+        resuming = self.history.n_iterations > 0
 
-        all_results: list[pd.DataFrame] = [baseline_results]
-        all_names: list[str] = ["baseline"]
-        all_strategies: list[list | None] = [None]
+        if resuming:
+            baseline_results, all_results, all_names, all_strategies = (
+                self._recover_state()
+            )
+            rank_df, significance_df = self._rank_and_significance(
+                all_results, all_names, len(baseline_results)
+            )
+            best_overall_rank, best_strategy_name, iterations_since_improvement = (
+                self._recompute_tracking(rank_df)
+            )
+            start_iteration = self.history.n_iterations + 1
+        else:
+            notebook.write_header()
 
-        best_overall_rank = float("inf")
-        best_strategy_name = "baseline"
-        iterations_since_improvement = 0
-        rank_df: pd.DataFrame | None = None
-        significance_df: pd.DataFrame | None = None
+            baseline_dir = self.output_dir / "baseline"
+            baseline_dir.mkdir(parents=True, exist_ok=True)
+            baseline_results = self.evaluate([], baseline_dir)
+            notebook.write_baseline(baseline_results)
 
-        for i in range(1, self.stopping.max_iterations + 1):
+            all_results: list[pd.DataFrame] = [baseline_results]
+            all_names: list[str] = ["baseline"]
+            all_strategies: list[list | None] = [None]
+
+            best_overall_rank = float("inf")
+            best_strategy_name = "baseline"
+            iterations_since_improvement = 0
+            rank_df = None
+            significance_df = None
+            start_iteration = 1
+
+        for i in range(start_iteration, self.stopping.max_iterations + 1):
             context = self.build_context(baseline_results, rank_df, significance_df)
             strategy, narrative = self.propose(context)
 
@@ -210,6 +228,53 @@ class AbstractResearcher(ABC):
             sig_df.to_csv(self.output_dir / "significance.csv")
 
         return rank_df, sig_df
+
+    def _recover_state(
+        self,
+    ) -> tuple[pd.DataFrame, list[pd.DataFrame], list[str], list[list | None]]:
+        """Load results from all completed iterations for a resume.
+
+        Raises:
+            FileNotFoundError: If the baseline or any iteration results CSV is
+                missing from disk.
+        """
+        baseline_csv = self.output_dir / "baseline" / "postprocess_results.csv"
+        if not baseline_csv.exists():
+            raise FileNotFoundError(
+                f"Cannot resume: baseline results not found at {baseline_csv}"
+            )
+        baseline_results = pd.read_csv(baseline_csv)
+
+        all_results: list[pd.DataFrame] = [baseline_results]
+        all_names: list[str] = ["baseline"]
+        all_strategies: list[list | None] = [None]
+
+        for entry in self.history.iterations:
+            i = entry["iteration"]
+            iter_dir = self.output_dir / f"iteration_{i:03d}"
+            results_csv = iter_dir / "postprocess_results.csv"
+            if not results_csv.exists():
+                raise FileNotFoundError(
+                    f"Cannot resume: results missing for iteration {i} at {results_csv}"
+                )
+            all_results.append(pd.read_csv(results_csv))
+            all_names.append(f"iteration_{i:03d}")
+            all_strategies.append(json.loads((iter_dir / "strategy.json").read_text()))
+
+        return baseline_results, all_results, all_names, all_strategies
+
+    def _recompute_tracking(self, rank_df: pd.DataFrame) -> tuple[float, str, int]:
+        """Recompute best-tracking state from rankings and history after a resume.
+
+        Returns:
+            (best_overall_rank, best_strategy_name, iterations_since_improvement)
+        """
+        best_overall_rank = float(rank_df.iloc[0]["average_rank"])
+        best_strategy_name = str(rank_df.iloc[0]["strategy"])
+        best_iter = self.history.best_iteration
+        n = self.history.n_iterations
+        iterations_since_improvement = n if best_iter is None else n - best_iter
+        return best_overall_rank, best_strategy_name, iterations_since_improvement
 
     def _write_summary(
         self,

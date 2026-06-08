@@ -73,6 +73,19 @@ autoresearch/postprocessing/run1/
     └── ...
 ```
 
+## Resuming a run
+
+If a run is interrupted (e.g., instance restart, timeout), re-run the exact same command pointing to the same `--output` directory. The loop detects the existing `history.json` and picks up from where it left off:
+
+- Completed iteration results are loaded from `iteration_NNN/postprocess_results.csv` on disk.
+- Rankings and best-tracking state are recomputed from the recovered results.
+- The loop continues from the next iteration number.
+- The notebook is appended to, not overwritten.
+
+Changing `--num-workers` between runs is safe — it only affects speed, not results.
+
+If `history.json` or any iteration CSV is missing, `run()` raises `FileNotFoundError` rather than silently producing incorrect results.
+
 ## Stopping logic
 
 The loop stops when **any** of the following conditions is met:
