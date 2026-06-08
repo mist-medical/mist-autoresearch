@@ -409,9 +409,8 @@ class TestResume:
         rank_df = self._make_rank_df(
             ["baseline", "iteration_001", "iteration_002"], [1.0, 2.0, 3.0]
         )
-        best_rank, best_name, since = r._recompute_tracking(rank_df)
+        best_name, since = r._recompute_tracking(rank_df)
         assert best_name == "baseline"
-        assert best_rank == 1.0
         assert since == 2  # no iteration ever beat baseline → n_iterations
 
     def test_recompute_tracking_iteration_best(self, tmp_path):
@@ -422,7 +421,7 @@ class TestResume:
             ["iteration_001", "iteration_002", "iteration_003", "baseline"],
             [1.0, 2.0, 3.0, 4.0],
         )
-        _, best_name, since = r._recompute_tracking(rank_df)
+        best_name, since = r._recompute_tracking(rank_df)
         assert best_name == "iteration_001"
         assert since == 2  # n_iterations(3) - best_iteration(1) = 2
 

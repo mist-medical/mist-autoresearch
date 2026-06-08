@@ -110,8 +110,8 @@ class AbstractResearcher(ABC):
             rank_df, significance_df = self._rank_and_significance(
                 all_results, all_names, len(baseline_results)
             )
-            best_overall_rank, best_strategy_name, iterations_since_improvement = (
-                self._recompute_tracking(rank_df)
+            best_strategy_name, iterations_since_improvement = self._recompute_tracking(
+                rank_df
             )
             start_iteration = self.history.n_iterations + 1
         else:
@@ -126,7 +126,6 @@ class AbstractResearcher(ABC):
             all_names: list[str] = ["baseline"]
             all_strategies: list[list | None] = [None]
 
-            best_overall_rank = float("inf")
             best_strategy_name = "baseline"
             iterations_since_improvement = 0
             rank_df = None
@@ -153,11 +152,9 @@ class AbstractResearcher(ABC):
             iter_rank = _get_mean_rank(rank_df, iter_name)
 
             # Track global best across all strategies (including baseline).
-            global_best_rank = float(rank_df.iloc[0]["average_rank"])
             global_best_name = str(rank_df.iloc[0]["strategy"])
 
-            if global_best_rank < best_overall_rank:
-                best_overall_rank = global_best_rank
+            if global_best_name != best_strategy_name:
                 best_strategy_name = global_best_name
                 iterations_since_improvement = 0
                 if global_best_name == iter_name:
@@ -203,6 +200,11 @@ class AbstractResearcher(ABC):
         # Resolve the best strategy from the final rankings.
         best_idx = all_names.index(best_strategy_name)
         best_strategy = all_strategies[best_idx]
+        best_overall_rank = (
+            _get_mean_rank(rank_df, best_strategy_name)
+            if rank_df is not None
+            else float("inf")
+        )
         self._write_summary(best_strategy_name, best_strategy, best_overall_rank)
         return best_strategy
 
@@ -263,18 +265,17 @@ class AbstractResearcher(ABC):
 
         return baseline_results, all_results, all_names, all_strategies
 
-    def _recompute_tracking(self, rank_df: pd.DataFrame) -> tuple[float, str, int]:
+    def _recompute_tracking(self, rank_df: pd.DataFrame) -> tuple[str, int]:
         """Recompute best-tracking state from rankings and history after a resume.
 
         Returns:
-            (best_overall_rank, best_strategy_name, iterations_since_improvement)
+            (best_strategy_name, iterations_since_improvement)
         """
-        best_overall_rank = float(rank_df.iloc[0]["average_rank"])
         best_strategy_name = str(rank_df.iloc[0]["strategy"])
         best_iter = self.history.best_iteration
         n = self.history.n_iterations
         iterations_since_improvement = n if best_iter is None else n - best_iter
-        return best_overall_rank, best_strategy_name, iterations_since_improvement
+        return best_strategy_name, iterations_since_improvement
 
     def _write_summary(
         self,
