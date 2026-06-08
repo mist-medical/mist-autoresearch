@@ -80,7 +80,7 @@ def _build_parser() -> argparse.ArgumentParser:
         description=(
             "LLM-driven sequential search for a postprocessing strategy that "
             "improves segmentation quality. Each iteration proposes a strategy "
-            "via the Anthropic API, evaluates it with mist_postprocess, and "
+            "via the Claude Code CLI, evaluates it with mist_postprocess, and "
             "ranks it against all previous strategies. The loop stops when a "
             "patience or significance criterion is met, or when max_iterations "
             "is reached."

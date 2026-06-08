@@ -1,6 +1,7 @@
 """Abstract base class for all autoresearch loops."""
 
 import json
+import math
 from abc import ABC, abstractmethod
 from pathlib import Path
 
@@ -252,8 +253,6 @@ def _get_p_vs_baseline(sig_df: pd.DataFrame | None, name: str) -> float | None:
     if "baseline" not in sig_df.columns:
         return None
     val = sig_df.loc[name, "baseline"]
-    import math
-
     if math.isnan(float(val)):
         return None
     return float(val)

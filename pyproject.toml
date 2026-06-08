@@ -22,7 +22,6 @@ keywords = [
 dependencies = [
     "mist-medical",
     "pandas",
-    "rich",
 ]
 
 [project.urls]
