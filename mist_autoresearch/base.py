@@ -22,18 +22,15 @@ class AbstractResearcher(ABC):
     Args:
         output_dir: Root directory for all run outputs.
         stopping: Stopping criteria parameters.
-        model: Anthropic model ID for the proposal step.
     """
 
     def __init__(
         self,
         output_dir: Path,
         stopping: StoppingCriteria,
-        model: str = "claude-opus-4-8",
     ) -> None:
         self.output_dir = Path(output_dir)
         self.stopping = stopping
-        self.model = model
         self.history = History(self.output_dir / "history.json")
 
     # ------------------------------------------------------------------

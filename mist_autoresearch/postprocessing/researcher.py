@@ -86,7 +86,7 @@ class PostprocessingResearcher(AbstractResearcher):
         model: str | None = None,
         num_workers: int = 1,
     ) -> None:
-        super().__init__(output_dir=output_dir, stopping=stopping, model=model or "")
+        super().__init__(output_dir=output_dir, stopping=stopping)
         self.config = Path(config)
         self._model = model
         self._config_data: dict = json.loads(self.config.read_text())
