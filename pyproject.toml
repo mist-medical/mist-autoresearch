@@ -25,7 +25,7 @@ dependencies = [
 ]
 
 [project.urls]
-repository = "https://github.com/aecelaya/mist-autoresearch"
+repository = "https://github.com/mist-medical/mist-autoresearch"
 
 [project.scripts]
 mist_autoresearch = "mist_autoresearch.cli:main"

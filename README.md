@@ -37,7 +37,7 @@ See [docs/getting_started.md](docs/getting_started.md) and [docs/usage.md](docs/
 The postprocessing loop:
 
 1. Evaluates baseline predictions (no postprocessing) to establish a reference score.
-2. Asks Claude to propose a postprocessing strategy (structured JSON via tool use), including a written rationale.
+2. Asks Claude — via the Claude Code CLI (`claude -p`) — to propose a postprocessing strategy, returned as a JSON object (`steps` plus a written `narrative`) parsed from its response.
 3. Applies the strategy with `mist_postprocess` and evaluates with `mist_evaluate`.
 4. Ranks all strategies tried so far using `mist_rank` (BraTS-style mean rank).
 5. Feeds the ranking and pairwise significance table back to Claude.
