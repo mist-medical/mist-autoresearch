@@ -6,7 +6,11 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 
 import pandas as pd
-from mist.evaluation.ranking import compute_pairwise_significance, rank_results
+from mist.evaluation.ranking import (
+    SUMMARY_ROW_IDS,
+    compute_pairwise_significance,
+    rank_results,
+)
 
 from .history import History
 from .notebook import ResearchNotebook
@@ -108,7 +112,7 @@ class AbstractResearcher(ABC):
                 self._recover_state()
             )
             rank_df, significance_df = self._rank_and_significance(
-                all_results, all_names, len(baseline_results)
+                all_results, all_names, _count_patients(baseline_results)
             )
             best_strategy_name, iterations_since_improvement = self._recompute_tracking(
                 rank_df
@@ -144,23 +148,34 @@ class AbstractResearcher(ABC):
             all_names.append(f"iteration_{i:03d}")
             all_strategies.append(strategy)
 
+            n_patients = _count_patients(results)
             rank_df, significance_df = self._rank_and_significance(
-                all_results, all_names, len(results)
+                all_results, all_names, n_patients
             )
 
             iter_name = f"iteration_{i:03d}"
             iter_rank = _get_mean_rank(rank_df, iter_name)
 
-            # Track global best across all strategies (including baseline).
+            # Track the global best across all strategies (including baseline).
+            # Average ranks are pool-relative, so adding a strategy re-ranks the
+            # whole pool and can reorder two previously-close strategies. Only
+            # this iteration reaching the top counts as an improvement; a
+            # reshuffle among strategies we already had does not reset patience,
+            # but it still has to be recorded so history stays in sync with
+            # rankings.csv and summary.json.
             global_best_name = str(rank_df.iloc[0]["strategy"])
 
-            if global_best_name != best_strategy_name:
+            if global_best_name == iter_name:
                 best_strategy_name = global_best_name
                 iterations_since_improvement = 0
-                if global_best_name == iter_name:
-                    self.history.update_best(i)
+                self.history.update_best(i)
             else:
                 iterations_since_improvement += 1
+                if global_best_name != best_strategy_name:
+                    best_strategy_name = global_best_name
+                    self.history.update_best(_iteration_number(global_best_name))
+
+            self.history.set_iterations_since_improvement(iterations_since_improvement)
 
             # p-value used for stopping: best strategy vs baseline.
             best_p_vs_baseline = _get_p_vs_baseline(significance_df, best_strategy_name)
@@ -190,7 +205,7 @@ class AbstractResearcher(ABC):
             should_stop, reason = self.stopping.should_stop(
                 i,
                 iterations_since_improvement,
-                len(results),
+                n_patients,
                 best_p_vs_baseline,
             )
             if should_stop:
@@ -268,13 +283,21 @@ class AbstractResearcher(ABC):
     def _recompute_tracking(self, rank_df: pd.DataFrame) -> tuple[str, int]:
         """Recompute best-tracking state from rankings and history after a resume.
 
+        The patience counter is read back from history, which records it after
+        every iteration. Runs recorded before that field existed fall back to
+        deriving it from ``best_iteration``.
+
         Returns:
             (best_strategy_name, iterations_since_improvement)
         """
         best_strategy_name = str(rank_df.iloc[0]["strategy"])
-        best_iter = self.history.best_iteration
-        n = self.history.n_iterations
-        iterations_since_improvement = n if best_iter is None else n - best_iter
+
+        iterations_since_improvement = self.history.iterations_since_improvement
+        if iterations_since_improvement is None:
+            best_iter = self.history.best_iteration
+            n = self.history.n_iterations
+            iterations_since_improvement = n if best_iter is None else n - best_iter
+
         return best_strategy_name, iterations_since_improvement
 
     def _write_summary(
@@ -296,6 +319,27 @@ class AbstractResearcher(ABC):
 # ---------------------------------------------------------------------------
 # Module-level helpers (testable without instantiating a researcher)
 # ---------------------------------------------------------------------------
+
+
+def _count_patients(results: pd.DataFrame, id_column: str = "id") -> int:
+    """Return the number of patients in a results frame.
+
+    ``mist_evaluate`` appends aggregate rows (Mean, Std, percentiles) to its
+    results CSV. Ranking strips them, so they must not be counted here either —
+    otherwise a dataset is reported as five patients larger than it is, which
+    can wrongly satisfy the minimum-patients gate on the significance test.
+    """
+    if id_column not in results.columns:
+        return len(results)
+    ids = results[id_column].astype(str)
+    return int((~ids.isin(SUMMARY_ROW_IDS)).sum())
+
+
+def _iteration_number(name: str) -> int | None:
+    """Map a strategy name to its iteration number; None for ``baseline``."""
+    if not name.startswith("iteration_"):
+        return None
+    return int(name.removeprefix("iteration_"))
 
 
 def _get_mean_rank(rank_df: pd.DataFrame, name: str) -> float:

@@ -109,7 +109,9 @@ autoresearch/postprocessing/run1/
 If a run is interrupted (e.g., instance restart, timeout), re-run the exact same command pointing to the same `--output` directory. The loop detects the existing `history.json` and picks up from where it left off:
 
 - Completed iteration results are loaded from `iteration_NNN/postprocess_results.csv` on disk.
-- Rankings and best-tracking state are recomputed from the recovered results.
+- Rankings are recomputed from the recovered results, and the patience counter is
+  restored from `iterations_since_improvement` in `history.json`, so a resumed run
+  stops at the same point an uninterrupted one would.
 - The loop continues from the next iteration number.
 - The notebook is appended to, not overwritten.
 
@@ -122,14 +124,54 @@ If `history.json` or any iteration CSV is missing, `run()` raises `FileNotFoundE
 The loop stops when **any** of the following conditions is met:
 
 1. **Hard stop** — `--max-iterations` iterations have run.
-2. **Patience** — No strategy has beaten the global best for `--patience`
-   consecutive iterations, AND the dataset has fewer than
-   `--min-patients-for-significance` patients (significance test skipped).
-3. **Patience + significance** — Patience criterion is met AND the best
-   strategy is significantly better than baseline (p < `--alpha`, one-sided
-   Wilcoxon signed-rank test on per-patient mean ranks).
+2. **Patience** — the patience counter reaches `--patience` and no significance
+   test applies, either because the dataset has fewer than
+   `--min-patients-for-significance` patients, or because baseline is still the
+   best strategy and so there is nothing to test against it.
+3. **Patience + significance** — the patience counter reaches `--patience` and
+   the best strategy is significantly better than baseline (p < `--alpha`,
+   one-sided Wilcoxon signed-rank test on per-patient mean ranks).
 
 At least `--min-iterations` iterations must run before criteria 2 and 3 are checked.
+
+Note that if patience runs out while a non-baseline strategy leads but has *not*
+reached significance, the loop deliberately keeps going to `--max-iterations`
+rather than stopping on a lead it cannot back up statistically. Budget compute
+for the full `--max-iterations` — each iteration runs a `mist_postprocess` and
+evaluation pass over the whole test CSV.
+
+### What counts as an improvement
+
+The patience counter resets **only** when the strategy proposed on the current
+iteration takes the top of the cumulative ranking.
+
+This distinction matters because average ranks are pool-relative: they are
+recomputed over every strategy tried so far, so adding one strategy re-ranks the
+whole pool and can reorder two strategies that were already close. When such a
+reshuffle promotes an *older* strategy to the top, the loop records the new
+leader — in `rankings.csv`, `summary.json`, and `history.json` alike — but does
+not count it as an improvement, because no new strategy was found. Patience keeps
+counting.
+
+For the same reason, rank *values* are never compared across iterations. A mean
+rank of 1.4 in a pool of two strategies is not better than 5.9 in a pool of
+twelve; ranks inflate as the pool grows. The loop tracks the best strategy by
+name, always taking the top row of the current ranking.
+
+## Run artifacts
+
+| File | Contents |
+|---|---|
+| `rankings.csv` | Cumulative BraTS-style mean rank per strategy, best first. Rewritten every iteration. |
+| `significance.csv` | Pairwise one-sided Wilcoxon p-values. Entry `[A, B]` is the p-value that A is better than B. |
+| `summary.json` | Winner of the run: `best_strategy_name`, its `best_overall_rank`, and the `best_strategy` steps (`null` if baseline won). Derived from the final `rankings.csv`. |
+| `history.json` | Per-iteration log plus `best_iteration` (`null` if baseline is best), `iterations_since_improvement`, and `stopped_reason`. Used to resume. |
+| `research_notebook.md` | The agent's narrative reasoning per iteration. |
+
+`rankings.csv`, `summary.json`, and `history.json` always agree on which strategy
+won. To act on a finished run, read `best_strategy` out of `summary.json` and feed
+it to `mist_postprocess`; check `significance.csv` to confirm the winner is
+significantly better than baseline before you rely on it.
 
 ## research_notebook.md
 

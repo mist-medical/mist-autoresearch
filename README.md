@@ -48,19 +48,26 @@ The postprocessing loop:
 ```
 autoresearch/postprocessing/run1/
 ├── research_notebook.md       # Agent reasoning at each iteration
-├── history.json               # Full resumable run log
-├── summary.json               # Best strategy and stopping reason
-├── rankings.csv               # Cumulative strategy rankings
+├── history.json               # Full resumable run log + stopping reason
+├── summary.json               # Winning strategy, ready to feed to mist_postprocess
+├── rankings.csv               # Cumulative strategy rankings, best first
 ├── significance.csv           # Pairwise Wilcoxon significance matrix
 ├── baseline/
 └── iteration_001/ ...
 ```
 
+`rankings.csv`, `summary.json`, and `history.json` always agree on which strategy won.
+
 ## Stopping criteria
 
 - **Hard stop**: `--max-iterations` (default 50)
-- **Patience**: No improvement for `--patience` consecutive iterations (default 10)
-- **Significance gate**: Best strategy is significantly better than baseline (p < `--alpha`, default 0.05) — required alongside patience for early stopping unless the dataset is too small for the Wilcoxon test
+- **Patience**: No improvement for `--patience` consecutive iterations (default 10). An
+  iteration counts as an improvement only when the strategy it proposed reaches the top
+  of the cumulative ranking.
+- **Significance gate**: Best strategy is significantly better than baseline (p < `--alpha`, default 0.05) — required alongside patience for early stopping, unless the dataset is too small for the Wilcoxon test or baseline is itself the best strategy
+
+If patience runs out while a non-baseline strategy leads but is not yet significant, the
+loop keeps searching to `--max-iterations`. See [docs/usage.md](docs/usage.md#stopping-logic).
 
 ## License
 
