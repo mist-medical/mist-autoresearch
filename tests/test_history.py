@@ -64,6 +64,42 @@ class TestHistory:
         reloaded = json.loads(path.read_text())
         assert reloaded["best_iteration"] == 3
 
+    def test_update_best_accepts_none_when_baseline_retakes_top(self, tmp_path):
+        path = tmp_path / "history.json"
+        h = History(path)
+        h.update_best(3)
+        h.update_best(None)
+        assert h.best_iteration is None
+        reloaded = json.loads(path.read_text())
+        assert reloaded["best_iteration"] is None
+
+    def test_iterations_since_improvement_defaults_to_zero(self, tmp_path):
+        h = History(tmp_path / "history.json")
+        assert h.iterations_since_improvement == 0
+
+    def test_set_iterations_since_improvement_persists(self, tmp_path):
+        path = tmp_path / "history.json"
+        h = History(path)
+        h.set_iterations_since_improvement(4)
+        assert h.iterations_since_improvement == 4
+        reloaded = json.loads(path.read_text())
+        assert reloaded["iterations_since_improvement"] == 4
+
+    def test_iterations_since_improvement_none_for_legacy_history(self, tmp_path):
+        # History files written before the field existed must not raise.
+        path = tmp_path / "history.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "iterations": [],
+                    "best_iteration": None,
+                    "stopped_reason": None,
+                    "started_at": "2026-01-01T00:00:00",
+                }
+            )
+        )
+        assert History(path).iterations_since_improvement is None
+
     def test_set_stopped_reason_persists(self, tmp_path):
         path = tmp_path / "history.json"
         h = History(path)

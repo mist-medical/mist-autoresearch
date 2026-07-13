@@ -9,10 +9,21 @@ import pytest
 
 from mist_autoresearch.base import (
     AbstractResearcher,
+    _count_patients,
     _get_mean_rank,
     _get_p_vs_baseline,
+    _iteration_number,
 )
 from mist_autoresearch.stopping import StoppingCriteria
+
+# Aggregate rows that mist_evaluate appends to every results CSV.
+SUMMARY_ROWS = ["Mean", "Std", "25th Percentile", "Median", "75th Percentile"]
+
+
+def _results_with_summary_rows(n_patients: int) -> pd.DataFrame:
+    """A results frame shaped like a real postprocess_results.csv."""
+    ids = [f"p{i}" for i in range(n_patients)] + SUMMARY_ROWS
+    return pd.DataFrame({"id": ids, "WT_dice": [0.9] * len(ids)})
 
 
 # ---------------------------------------------------------------------------
@@ -27,8 +38,10 @@ class _FakeResearcher(AbstractResearcher):
         super().__init__(output_dir=output_dir, stopping=stopping)
         self._propose_seq = propose_seq or [([], "narrative")]
         self._propose_idx = 0
-        self._eval_df = eval_df or pd.DataFrame(
-            {"id": [f"p{i}" for i in range(20)], "WT_dice": [0.9] * 20}
+        self._eval_df = (
+            pd.DataFrame({"id": [f"p{i}" for i in range(20)], "WT_dice": [0.9] * 20})
+            if eval_df is None
+            else eval_df
         )
 
     def propose(self, context):
@@ -73,6 +86,27 @@ class TestGetMeanRank:
     def test_returns_inf_for_unknown_strategy(self):
         df = pd.DataFrame({"strategy": ["a"], "average_rank": [1.0]})
         assert _get_mean_rank(df, "unknown") == float("inf")
+
+
+class TestCountPatients:
+    def test_excludes_summary_rows(self):
+        assert _count_patients(_results_with_summary_rows(20)) == 20
+
+    def test_counts_all_rows_when_no_summary_rows(self):
+        df = pd.DataFrame({"id": ["p0", "p1"], "WT_dice": [0.9, 0.8]})
+        assert _count_patients(df) == 2
+
+    def test_falls_back_to_row_count_without_id_column(self):
+        df = pd.DataFrame({"WT_dice": [0.9, 0.8]})
+        assert _count_patients(df) == 2
+
+
+class TestIterationNumber:
+    def test_parses_iteration_name(self):
+        assert _iteration_number("iteration_008") == 8
+
+    def test_returns_none_for_baseline(self):
+        assert _iteration_number("baseline") is None
 
 
 class TestGetPVsBaseline:
@@ -313,14 +347,177 @@ class TestAbstractResearcherRun:
         summary = json.loads((tmp_path / "out" / "summary.json").read_text())
         assert summary["best_overall_rank"] is None
 
+    def test_significance_gate_ignores_summary_rows(self, tmp_path):
+        # 20 patients + 5 aggregate rows. The gate must see 20, not 25, and so
+        # skip the significance test when the threshold is 25.
+        r = _FakeResearcher(
+            tmp_path / "out",
+            _sc(max_iterations=1, min_patients_for_significance=25),
+            eval_df=_results_with_summary_rows(20),
+        )
+        with (
+            patch("mist_autoresearch.base.rank_results") as mock_rank,
+            patch("mist_autoresearch.base.compute_pairwise_significance") as mock_sig,
+        ):
+            mock_rank.return_value = (
+                self._make_rank_df(["baseline", "iteration_001"], [1.0, 2.0]),
+                None,
+            )
+            r.run()
+        mock_sig.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Tests for best-strategy tracking
+#
+# Average ranks are pool-relative, so adding a strategy re-ranks the whole pool
+# and can promote a strategy that is NOT the current iteration ("stale flip").
+# The loop must record that in history without treating it as an improvement.
+# ---------------------------------------------------------------------------
+
+
+class TestBestTracking:
+    def _make_rank_df(self, names):
+        ranks = [float(i + 1) for i in range(len(names))]
+        return pd.DataFrame({"strategy": names, "average_rank": ranks})
+
+    def _rank_side_effect(self, orderings):
+        return [(self._make_rank_df(names), None) for names in orderings]
+
+    def _sig_df(self, p_values):
+        df = pd.DataFrame({"baseline": p_values}, dtype=float)
+        df.index.name = "strategy"
+        return df
+
+    def test_stale_flip_syncs_history_and_summary(self, tmp_path):
+        # Leader goes iteration_001 → iteration_001 → iteration_002. On i=3 the
+        # top-ranked strategy is iteration_002, not the current iteration.
+        orderings = [
+            ["iteration_001", "baseline"],
+            ["iteration_001", "iteration_002", "baseline"],
+            ["iteration_002", "iteration_001", "iteration_003", "baseline"],
+        ]
+        out = tmp_path / "out"
+        r = _FakeResearcher(
+            out,
+            _sc(max_iterations=3, patience=10),
+            propose_seq=[
+                ([{"transform": "a"}], "n1"),
+                ([{"transform": "b"}], "n2"),
+                ([{"transform": "c"}], "n3"),
+            ],
+        )
+        with (
+            patch("mist_autoresearch.base.rank_results") as mock_rank,
+            patch("mist_autoresearch.base.compute_pairwise_significance") as mock_sig,
+        ):
+            mock_rank.side_effect = self._rank_side_effect(orderings)
+            mock_sig.return_value = self._sig_df(
+                {"iteration_001": 0.5, "iteration_002": 0.5, "iteration_003": 0.5}
+            )
+            best = r.run()
+
+        summary = json.loads((out / "summary.json").read_text())
+        rankings = pd.read_csv(out / "rankings.csv")
+
+        # The three artifacts a user reads must all name the same winner.
+        assert rankings.iloc[0]["strategy"] == "iteration_002"
+        assert summary["best_strategy_name"] == "iteration_002"
+        assert r.history.best_iteration == 2
+        # ...and the returned strategy is the one iteration_002 actually ran.
+        assert best == [{"transform": "b"}]
+        assert summary["best_strategy"] == [{"transform": "b"}]
+
+    def test_stale_flip_does_not_reset_patience(self, tmp_path):
+        # Same leader shuffle, but patience=2. A reshuffle among strategies we
+        # already had is not an improvement, so patience must keep counting and
+        # fire on i=3 rather than resetting and running to max_iterations.
+        orderings = [
+            ["iteration_001", "baseline"],
+            ["iteration_001", "iteration_002", "baseline"],
+            ["iteration_002", "iteration_001", "iteration_003", "baseline"],
+        ]
+        r = _FakeResearcher(
+            tmp_path / "out",
+            _sc(max_iterations=5, patience=2, min_iterations=1),
+        )
+        with (
+            patch("mist_autoresearch.base.rank_results") as mock_rank,
+            patch("mist_autoresearch.base.compute_pairwise_significance") as mock_sig,
+        ):
+            mock_rank.side_effect = self._rank_side_effect(orderings)
+            mock_sig.return_value = self._sig_df(
+                {"iteration_001": 0.5, "iteration_002": 0.01, "iteration_003": 0.5}
+            )
+            r.run()
+
+        assert r._propose_idx == 3  # stopped at i=3, not 5
+        assert r.history.stopped_reason == "patience+significance"
+        assert r.history.iterations_since_improvement == 2
+
+    def test_new_iteration_taking_top_resets_patience(self, tmp_path):
+        orderings = [
+            ["baseline", "iteration_001"],
+            ["iteration_002", "baseline", "iteration_001"],
+        ]
+        r = _FakeResearcher(
+            tmp_path / "out", _sc(max_iterations=2, patience=10, min_iterations=1)
+        )
+        with (
+            patch("mist_autoresearch.base.rank_results") as mock_rank,
+            patch("mist_autoresearch.base.compute_pairwise_significance") as mock_sig,
+        ):
+            mock_rank.side_effect = self._rank_side_effect(orderings)
+            mock_sig.return_value = self._sig_df(
+                {"iteration_001": 0.5, "iteration_002": 0.02}
+            )
+            r.run()
+
+        assert r.history.best_iteration == 2
+        assert r.history.iterations_since_improvement == 0
+
+    def test_baseline_retaking_top_clears_best_iteration(self, tmp_path):
+        # iteration_001 leads, then baseline reclaims the top. best_iteration
+        # must not keep pointing at an iteration that has been overtaken.
+        orderings = [
+            ["iteration_001", "baseline"],
+            ["baseline", "iteration_001", "iteration_002"],
+        ]
+        out = tmp_path / "out"
+        r = _FakeResearcher(out, _sc(max_iterations=2, patience=10))
+        with (
+            patch("mist_autoresearch.base.rank_results") as mock_rank,
+            patch("mist_autoresearch.base.compute_pairwise_significance") as mock_sig,
+        ):
+            mock_rank.side_effect = self._rank_side_effect(orderings)
+            mock_sig.return_value = self._sig_df(
+                {"iteration_001": 0.5, "iteration_002": 0.5}
+            )
+            best = r.run()
+
+        summary = json.loads((out / "summary.json").read_text())
+        assert summary["best_strategy_name"] == "baseline"
+        assert summary["best_strategy"] is None
+        assert r.history.best_iteration is None
+        assert best is None
+
 
 # ---------------------------------------------------------------------------
 # Tests for resume (_recover_state, _recompute_tracking, run() with history)
 # ---------------------------------------------------------------------------
 
 
-def _seed_run(out: Path, n_iterations: int = 1, best_iteration=None) -> None:
-    """Write a partial run to *out* without executing any real evaluation."""
+def _seed_run(
+    out: Path,
+    n_iterations: int = 1,
+    best_iteration=None,
+    iterations_since_improvement=None,
+) -> None:
+    """Write a partial run to *out* without executing any real evaluation.
+
+    Leaving *iterations_since_improvement* as None seeds a legacy history file
+    (written before the field existed), exercising the fallback path.
+    """
     out.mkdir(parents=True, exist_ok=True)
 
     df = pd.DataFrame({"id": [f"p{i}" for i in range(20)], "WT_dice": [0.9] * 20})
@@ -342,6 +539,8 @@ def _seed_run(out: Path, n_iterations: int = 1, best_iteration=None) -> None:
         "stopped_reason": None,
         "started_at": "2026-01-01T00:00:00",
     }
+    if iterations_since_improvement is not None:
+        history_data["iterations_since_improvement"] = iterations_since_improvement
 
     for i in range(1, n_iterations + 1):
         iter_dir = out / f"iteration_{i:03d}"
@@ -424,6 +623,16 @@ class TestResume:
         best_name, since = r._recompute_tracking(rank_df)
         assert best_name == "iteration_001"
         assert since == 2  # n_iterations(3) - best_iteration(1) = 2
+
+    def test_recompute_tracking_prefers_persisted_counter(self, tmp_path):
+        # Persisted patience state wins over re-deriving it from best_iteration,
+        # which is only an approximation (here it would have given 5 - 1 = 4).
+        out = tmp_path / "out"
+        _seed_run(out, n_iterations=5, best_iteration=1, iterations_since_improvement=2)
+        r = _FakeResearcher(out, _sc())
+        rank_df = self._make_rank_df(["iteration_001", "baseline"], [1.0, 2.0])
+        _, since = r._recompute_tracking(rank_df)
+        assert since == 2
 
     # ------------------------------------------------------------------
     # run() resume behaviour

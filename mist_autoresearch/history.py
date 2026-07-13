@@ -26,6 +26,7 @@ class History:
         return {
             "iterations": [],
             "best_iteration": None,
+            "iterations_since_improvement": 0,
             "stopped_reason": None,
             "started_at": datetime.now().isoformat(),
         }
@@ -61,9 +62,22 @@ class History:
         )
         self._save()
 
-    def update_best(self, iteration: int) -> None:
-        """Mark an iteration as the current best and flush to disk."""
+    def update_best(self, iteration: int | None) -> None:
+        """Record which iteration currently holds the top rank and flush to disk.
+
+        Pass ``None`` when baseline is back on top, so that ``best_iteration``
+        never keeps pointing at an iteration that has since been overtaken.
+        """
         self._data["best_iteration"] = iteration
+        self._save()
+
+    def set_iterations_since_improvement(self, count: int) -> None:
+        """Record the patience counter and flush to disk.
+
+        Persisted so that a resumed run restores the exact patience state
+        instead of re-deriving it from ``best_iteration``.
+        """
+        self._data["iterations_since_improvement"] = count
         self._save()
 
     def set_stopped_reason(self, reason: str) -> None:
@@ -82,6 +96,11 @@ class History:
     @property
     def best_iteration(self) -> int | None:
         return self._data["best_iteration"]
+
+    @property
+    def iterations_since_improvement(self) -> int | None:
+        """Patience counter, or None if written before this field existed."""
+        return self._data.get("iterations_since_improvement")
 
     @property
     def n_iterations(self) -> int:
