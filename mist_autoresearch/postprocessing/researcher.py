@@ -25,6 +25,34 @@ def _load_transform_metadata() -> list[dict[str, Any]]:
     return describe_transforms()
 
 
+def _dataset_summary(config: dict) -> tuple[list, dict]:
+    """Extract the label set and final classes from a MIST ``config.json``.
+
+    ``mist_analyze`` nests both: the labels live under ``dataset_info``, and the
+    final classes are expanded into ``evaluation`` as
+    ``{class_name: {"labels": [...], "metrics": {...}}}``. Reading them from the
+    top level yields nothing, which silently strips the dataset description out
+    of the proposal prompt.
+
+    Returns:
+        (labels, final_classes) where final_classes maps class name to its
+        constituent labels.
+    """
+    dataset_info = config.get("dataset_info") or {}
+    labels = dataset_info.get("labels") or config.get("labels") or []
+
+    evaluation = config.get("evaluation") or {}
+    final_classes = {
+        name: spec.get("labels", [])
+        for name, spec in evaluation.items()
+        if isinstance(spec, dict)
+    }
+    if not final_classes:
+        final_classes = config.get("final_classes") or {}
+
+    return labels, final_classes
+
+
 def _parse_strategy_response(text: str) -> tuple[list, str]:
     """Extract (steps, narrative) from a claude -p response.
 
@@ -135,15 +163,25 @@ class PostprocessingResearcher(AbstractResearcher):
         """Call ``claude -p`` and return (steps, narrative).
 
         Raises:
-            RuntimeError: If the response cannot be parsed as a valid strategy.
-            subprocess.CalledProcessError: If the ``claude`` CLI exits non-zero.
+            RuntimeError: If the ``claude`` CLI exits non-zero, or if its
+                response cannot be parsed as a valid strategy.
         """
         prompt = self._build_prompt(context)
-        cmd = ["claude", "-p", prompt]
+        cmd = ["claude", "-p"]
         if self._model:
-            cmd = ["claude", "-p", "--model", self._model, prompt]
+            cmd += ["--model", self._model]
+        cmd.append(prompt)
 
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            # check=True would raise CalledProcessError, whose message is just
+            # the exit status and the (enormous) prompt — the CLI's own error
+            # goes to the captured stderr and is never shown. Surface it.
+            raise RuntimeError(
+                f"'claude -p' exited with status {result.returncode}.\n"
+                f"--- stderr ---\n{result.stderr.strip() or '(empty)'}\n"
+                f"--- stdout ---\n{result.stdout.strip()[:2000] or '(empty)'}"
+            )
         return _parse_strategy_response(result.stdout)
 
     # ------------------------------------------------------------------
@@ -152,12 +190,16 @@ class PostprocessingResearcher(AbstractResearcher):
 
     def _build_prompt(self, context: dict) -> str:
         cfg = context["config"]
-        labels = cfg.get("labels", [])
-        final_classes = cfg.get("final_classes", {})
+        labels, final_classes = _dataset_summary(cfg)
         transforms = context["transforms"]
         history = context["history"]
         rank_df = context["rank_df"]
         significance = context["significance"]
+        baseline_results = context["baseline_results"]
+
+        metrics = (
+            [k for k in baseline_results[0] if k != "id"] if baseline_results else []
+        )
 
         parts = [
             "You are a medical image postprocessing researcher. Your goal is to "
@@ -167,6 +209,13 @@ class PostprocessingResearcher(AbstractResearcher):
             "## Dataset",
             f"- Segmentation labels: {labels}",
             f"- Final classes: {json.dumps(final_classes)}",
+            "",
+            "## Evaluation Metrics",
+            "These are the only metrics computed for this dataset. Strategies are "
+            "ranked on all of them jointly (BraTS-style mean rank), so a proposal "
+            "can only be judged by how it moves these — no other metric is "
+            "available, regardless of what any other section suggests.",
+            json.dumps(metrics),
         ]
 
         if self._additional_prompt:
@@ -182,16 +231,24 @@ class PostprocessingResearcher(AbstractResearcher):
             json.dumps(transforms, indent=2),
             "",
             "## Baseline Results (No Postprocessing)",
-            json.dumps(context["baseline_results"][:5], indent=2),
+            json.dumps(baseline_results[:5], indent=2),
         ]
 
         if history:
-            parts += ["", "## Strategies Tried So Far"]
+            parts += [
+                "",
+                "## Strategies Tried So Far",
+                "Scores are deliberately omitted here. Each iteration's mean rank and "
+                "p-value were measured against the pool of strategies that existed at "
+                "the time, and ranks inflate as the pool grows, so those numbers are "
+                "not comparable across iterations. Judge past strategies only by the "
+                "Current Rankings and Significance Matrix below, which are recomputed "
+                "over every strategy tried.",
+                "",
+            ]
             for entry in history:
                 parts.append(
                     f"- Iteration {entry['iteration']}: "
-                    f"mean_rank={entry['mean_rank']:.2f}, "
-                    f"p_vs_baseline={entry.get('p_value_vs_baseline')}, "
                     f"strategy={json.dumps(entry['strategy'])}"
                 )
             parts.append("")

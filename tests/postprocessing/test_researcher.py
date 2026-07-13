@@ -1,7 +1,6 @@
 """Tests for mist_autoresearch.postprocessing.researcher."""
 
 import json
-import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -23,9 +22,24 @@ from mist_autoresearch.stopping import StoppingCriteria
 
 
 def _make_config(tmp_path: Path) -> Path:
+    """A config.json shaped like the one mist_analyze actually writes.
+
+    Labels are nested under ``dataset_info``, and the final classes are expanded
+    into ``evaluation`` — they are NOT top-level keys.
+    """
     cfg = {
-        "labels": [1, 2, 3],
-        "final_classes": {"WT": [1, 2, 3], "TC": [1, 3], "ET": [3]},
+        "mist_version": "1.0.0",
+        "dataset_info": {
+            "task": "brats",
+            "modality": "mr",
+            "images": ["t1", "t1ce", "t2", "flair"],
+            "labels": [0, 1, 2, 3],
+        },
+        "evaluation": {
+            "WT": {"labels": [1, 2, 3], "metrics": {"dice": {}, "haus95": {}}},
+            "TC": {"labels": [1, 3], "metrics": {"dice": {}, "haus95": {}}},
+            "ET": {"labels": [3], "metrics": {"dice": {}, "haus95": {}}},
+        },
     }
     p = tmp_path / "config.json"
     p.write_text(json.dumps(cfg))
@@ -44,9 +58,9 @@ def _make_researcher(tmp_path: Path, model=None) -> PostprocessingResearcher:
     )
 
 
-def _fake_run(stdout: str):
+def _fake_run(stdout: str, returncode: int = 0, stderr: str = ""):
     """Return a mock subprocess.CompletedProcess with the given stdout."""
-    return SimpleNamespace(stdout=stdout, returncode=0)
+    return SimpleNamespace(stdout=stdout, returncode=returncode, stderr=stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +126,7 @@ class TestParseStrategyResponse:
 class TestPostprocessingResearcherInit:
     def test_reads_config_on_init(self, tmp_path):
         r = _make_researcher(tmp_path)
-        assert "labels" in r._config_data
+        assert r._config_data["dataset_info"]["labels"] == [0, 1, 2, 3]
 
     def test_creates_evaluator(self, tmp_path):
         r = _make_researcher(tmp_path)
@@ -255,53 +269,61 @@ class TestPropose:
         assert "--model" in cmd
         assert "claude-opus-4-8" in cmd
 
-    def test_subprocess_called_with_check_true(self, tmp_path):
-        r = _make_researcher(tmp_path)
-        response_text = self._valid_response([], "n")
+    def _empty_context(self, r):
+        return {
+            "config": r._config_data,
+            "transforms": [],
+            "baseline_results": [],
+            "rank_df": None,
+            "significance": None,
+            "history": [],
+        }
 
+    def test_nonzero_exit_surfaces_cli_stderr(self, tmp_path):
+        # check=True would raise CalledProcessError, whose message contains only
+        # the exit status and the giant prompt — the CLI's actual error is in the
+        # captured stderr and must not be swallowed.
+        r = _make_researcher(tmp_path)
         with (
-            patch("subprocess.run", return_value=_fake_run(response_text)) as mock_run,
+            patch(
+                "subprocess.run",
+                return_value=_fake_run("", returncode=1, stderr="Usage limit reached"),
+            ),
             patch(
                 "mist_autoresearch.postprocessing.researcher._load_transform_metadata",
                 return_value=[],
             ),
         ):
-            r.propose(
-                {
-                    "config": r._config_data,
-                    "transforms": [],
-                    "baseline_results": [],
-                    "rank_df": None,
-                    "significance": None,
-                    "history": [],
-                }
-            )
+            with pytest.raises(RuntimeError, match="Usage limit reached"):
+                r.propose(self._empty_context(r))
+
+    def test_nonzero_exit_reports_exit_status(self, tmp_path):
+        r = _make_researcher(tmp_path)
+        with (
+            patch("subprocess.run", return_value=_fake_run("", returncode=2)),
+            patch(
+                "mist_autoresearch.postprocessing.researcher._load_transform_metadata",
+                return_value=[],
+            ),
+        ):
+            with pytest.raises(RuntimeError, match="status 2"):
+                r.propose(self._empty_context(r))
+
+    def test_subprocess_not_called_with_check(self, tmp_path):
+        r = _make_researcher(tmp_path)
+        with (
+            patch(
+                "subprocess.run", return_value=_fake_run(self._valid_response([], "n"))
+            ) as mock_run,
+            patch(
+                "mist_autoresearch.postprocessing.researcher._load_transform_metadata",
+                return_value=[],
+            ),
+        ):
+            r.propose(self._empty_context(r))
 
         _, kwargs = mock_run.call_args
-        assert kwargs.get("check") is True
-
-    def test_propagates_subprocess_error(self, tmp_path):
-        r = _make_researcher(tmp_path)
-        with (
-            patch(
-                "subprocess.run", side_effect=subprocess.CalledProcessError(1, "claude")
-            ),
-            patch(
-                "mist_autoresearch.postprocessing.researcher._load_transform_metadata",
-                return_value=[],
-            ),
-        ):
-            with pytest.raises(subprocess.CalledProcessError):
-                r.propose(
-                    {
-                        "config": r._config_data,
-                        "transforms": [],
-                        "baseline_results": [],
-                        "rank_df": None,
-                        "significance": None,
-                        "history": [],
-                    }
-                )
+        assert not kwargs.get("check")
 
 
 # ---------------------------------------------------------------------------
@@ -418,6 +440,69 @@ class TestBuildPrompt:
         }
         prompt = r._build_prompt(ctx)
         assert "Rankings" in prompt
+
+    def test_prompt_reads_labels_from_nested_mist_config(self, tmp_path):
+        # Regression: these live under dataset_info / evaluation, not at the top
+        # level. Reading the top level yielded "labels: []" and "classes: {}",
+        # silently stripping the dataset description out of every proposal.
+        r = _make_researcher(tmp_path)
+        ctx = {
+            "config": r._config_data,
+            "transforms": [],
+            "baseline_results": [],
+            "rank_df": None,
+            "significance": None,
+            "history": [],
+        }
+        prompt = r._build_prompt(ctx)
+        assert "Segmentation labels: [0, 1, 2, 3]" in prompt
+        assert "Segmentation labels: []" not in prompt
+        assert '"ET": [3]' in prompt
+        assert "Final classes: {}" not in prompt
+
+    def test_prompt_lists_available_metrics(self, tmp_path):
+        r = _make_researcher(tmp_path)
+        ctx = {
+            "config": r._config_data,
+            "transforms": [],
+            "baseline_results": [
+                {"id": "p1", "et_dice": 0.9, "et_haus95": 2.0},
+            ],
+            "rank_df": None,
+            "significance": None,
+            "history": [],
+        }
+        prompt = r._build_prompt(ctx)
+        assert "Evaluation Metrics" in prompt
+        assert "et_dice" in prompt
+        assert "et_haus95" in prompt
+
+    def test_prompt_omits_stale_per_iteration_scores(self, tmp_path):
+        # Regression: mean_rank/p-value recorded in history are relative to the
+        # pool that existed at the time. Ranks inflate as the pool grows, so a
+        # rank of 1.50 from iteration 1 is not comparable to a later one, and
+        # showing them side by side misleads the agent about what worked.
+        r = _make_researcher(tmp_path)
+        ctx = {
+            "config": r._config_data,
+            "transforms": [],
+            "baseline_results": [],
+            "rank_df": [{"strategy": "baseline", "average_rank": 1.0}],
+            "significance": None,
+            "history": [
+                {
+                    "iteration": 1,
+                    "mean_rank": 1.5,
+                    "p_value_vs_baseline": 0.03,
+                    "strategy": [{"transform": "remove_small_objects"}],
+                }
+            ],
+        }
+        prompt = r._build_prompt(ctx)
+        assert "Iteration 1" in prompt
+        assert "remove_small_objects" in prompt
+        assert "mean_rank=1.50" not in prompt
+        assert "p_vs_baseline=0.03" not in prompt
 
     def test_prompt_includes_significance_when_provided(self, tmp_path):
         r = _make_researcher(tmp_path)
