@@ -2,6 +2,10 @@
 
 LLM-driven autoresearch tools for [MIST](https://github.com/mist-medical/MIST) medical image segmentation experiments.
 
+> [!NOTE]
+> mist-autoresearch is under active development. Commands, output formats,
+> and CLI flags may change without notice.
+
 ## What it does
 
 `mist_autoresearch` runs sequential research loops where Claude proposes experiment strategies, evaluates them against prior results, and iterates until a stopping criterion is met. Each run produces a `research_notebook.md` with the agent's step-by-step reasoning alongside evaluation metrics.
